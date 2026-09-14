@@ -83,6 +83,31 @@ For a persistent role override with a backup model for provider failures:
 
 `subagents.defaultModel` and `subagents.defaultProvider` apply to builtin, package, user, and project agents. `defaultModel` fills only agents that do not set `model` in frontmatter. `defaultProvider` is also applied to frontmatter and override models so bare ids resolve against the intended provider. Per-run model overrides and `agentOverrides.<name>.model` win over frontmatter and the global default. The same `agentOverrides` block can change `tools`, `skills`, inherited context, prompt text, or disable an agent (see [agents.md](agents.md)); matching custom-agent frontmatter is replaced for any field set by the override.
 
+## Shared model references
+
+Use `shared:<name>` in a native child run's `model`, an agent's `model`, or a model default/override to reuse an entry from `~/.pi/agent/shared-models.json`. The file follows `PI_CODING_AGENT_DIR` when set. Names are case-sensitive and are not limited to `lowCost`.
+
+```json
+{
+  "lowCost": { "provider": "your-provider", "model": "your-model" }
+}
+```
+
+```ts
+subagent({
+  agent: "delegate",
+  model: "shared:lowCost",
+  context: "fresh",
+  skill: "agent-browser",
+  task: "Execute the supplied browser test cases and return results with evidence. Do not edit project source files.",
+  async: true
+})
+```
+
+The parent resolves the reference before registry matching, model-scope checks and child launch. The child receives the concrete provider/model; normal launch evidence records that resolved model. Missing files, malformed configuration or unknown names fail rather than inheriting the main chat model. Ordinary model names do not read this file.
+
+New launches read the current file without a Pi reload. In-flight requests and resumed runs keep their launch-time primary model. `shared:lowCost:low` adds a thinking suffix; a literal configuration key wins if it includes that suffix. Fallback models continue to use ordinary model names and are not changed by this feature. Configuring a shared model does not automatically authorize delegation or change every agent's default.
+
 ## Fast mode
 
 Set `fast: true` on a run, in agent frontmatter, or in `subagents.agentOverrides.<name>.fast` to request the OpenAI priority service tier for supported native OpenAI-Codex children. This can use a higher quota tier or cost more. It is off by default.

@@ -1,5 +1,6 @@
 import { splitKnownThinkingSuffix as splitThinkingSuffix, type ModelInfo as AvailableModelInfo } from "../../shared/model-info.ts";
 import type { Usage } from "../../shared/types.ts";
+import { resolveSharedModelReference } from "../../shared/shared-models.ts";
 import { filterFallbackCandidates, findModelExclusion, parseModelKey, recordModelFailure } from "./model-exclusions.ts";
 import { checkModelScope, type ModelScopeCheckRule, type ModelScopeViolation, type ModelSource } from "./model-scope.ts";
 import { redactSecretValues } from "./permissions.ts";
@@ -359,7 +360,7 @@ export function resolveSubagentModelOverride(
 	options?: ResolveSubagentModelOverrideOptions,
 ): string | undefined {
 	const trimmed = typeof requestedModel === "string" ? requestedModel.trim() : "";
-	const explicit = trimmed && trimmed !== INHERIT_MODEL ? trimmed : undefined;
+	const explicit = trimmed && trimmed !== INHERIT_MODEL ? resolveSharedModelReference(trimmed) : undefined;
 	if (!parentModel) throwForUnresolvedEnforcedInheritScope(options?.scope, explicit === undefined || options?.source === "inherited");
 	let resolved: string | undefined;
 	let resolvedFromRegistry = explicit === undefined;
