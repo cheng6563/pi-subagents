@@ -186,7 +186,7 @@ and user/project agents override builtins with the same name.
 | `oracle` | Rare hard-decision/root-cause escalation | top-reasoning critic tier, bounded read-only; high thinking escalation only | Advisory trajectory review, not routine code review |
 | `advisor` | Compatibility alias for `oracle` | top-reasoning critic tier, bounded read-only; high thinking escalation only | Same advisory escalation role as `oracle` |
 
-Builtin `worker` and `delegate` use strict tool allowlists and do not inherit ambient parent extension tools. To give a child an extension tool, name it in `tools` and load its provider via `extensions`, a path-like `tools` entry, or `subagentOnlyExtensions`. Custom agents without an `extensions` field follow `subagents.defaultExtensions` when set.
+Native builtins inherit the normal tool set and exclude `subagent`; role responsibilities and the assigned task determine permitted work. Use background children for normal ambient extension loading. Foreground children require providers listed in `extensions` or `subagentOnlyExtensions`. An explicit `tools` list is still a strict allowlist, and an explicit empty `extensions` list disables ambient extensions. Further delegation belongs to the parent; the operator can enforce a single child level with `maxSubagentDepth: 1`.
 
 Builtin agents inherit the current Pi default model unless a run, user setting, project setting, or `subagents.defaultModel` overrides `model`. The table records recommended tier routing, not shipped hard defaults; explicit run, user, or project settings still win. Keep the parent/orchestrator on the ordinary strong default model unless parent/user policy says otherwise. Override builtin defaults before copying full agent files when a small tweak is enough.
 

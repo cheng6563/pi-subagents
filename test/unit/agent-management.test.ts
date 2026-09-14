@@ -146,7 +146,7 @@ describe("agent management config parsing", () => {
 		assert.equal(JSON.stringify(capabilities).includes("SYSTEM_PROMPT_SENTINEL"), false);
 	});
 
-	it("reports bundled reviewer supervisor contact without mutation tools in capabilities", () => {
+	it("reports bundled reviewer ambient tool inheritance in capabilities", () => {
 		const listed = handleManagementAction("list", { agentScope: "project", capabilities: true }, {
 			cwd: tempDir,
 			modelRegistry: { getAvailable: () => [] },
@@ -157,8 +157,8 @@ describe("agent management config parsing", () => {
 		assert.ok(capabilities);
 		const reviewer = capabilities.agents.find((agent) => agent.name === "reviewer");
 		assert.ok(reviewer, "reviewer builtin should be present in capability output");
-		assert.deepEqual(reviewer.tools.names, ["read", "grep", "find", "ls", "contact_supervisor"]);
-		assert.match(readText(listed), /Tools: read, grep, find, ls, contact_supervisor/);
+		assert.equal(reviewer.tools.ambient, true);
+		assert.deepEqual(reviewer.tools.names, []);
 		assert.equal("acceptance" in reviewer, false);
 	});
 

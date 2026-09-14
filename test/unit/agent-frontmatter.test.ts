@@ -677,7 +677,7 @@ Do work
 		assert.deepEqual(oracle?.aliases, ["advisor"]);
 		assert.doesNotMatch(oracle?.tools?.join(",") ?? "", /contact_supervisor/);
 		for (const name of ["scout", "researcher", "oracle", "reviewer"]) {
-			assert.equal(agents.find((candidate) => candidate.name === name)?.tools?.includes("intercom"), false, `${name} should not require generic intercom`);
+			assert.equal(agents.find((candidate) => candidate.name === name)?.tools?.includes("intercom") ?? false, false, `${name} should not require generic intercom`);
 		}
 		assert.match(oracle?.systemPrompt ?? "", /asking or consulting the oracle/);
 		assert.match(oracle?.systemPrompt ?? "", /When runtime bridge instructions provide `contact_supervisor`/);
@@ -1888,7 +1888,7 @@ Do work
 		}
 	});
 
-	it("bundled agents all have explicit tool allowlists", () => {
+	it("bundled native agents inherit tools while excluding nested delegation", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-tools-"));
 		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-tools-home-"));
 		tempDirs.push(dir);
@@ -1903,7 +1903,9 @@ Do work
 			assert.ok(builtins.length > 0);
 			for (const agent of builtins) {
 				if (agent.runner?.type === "external-cli" || agent.runner?.type === "external-job") continue;
-				assert.ok(agent.tools && agent.tools.length > 0, `${agent.name} should have explicit tools frontmatter`);
+				assert.equal(agent.tools, undefined, `${agent.name} should inherit normal tools`);
+				assert.deepEqual(agent.excludeTools, ["subagent"]);
+				assert.equal(agent.extensions, undefined);
 			}
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;
@@ -1913,7 +1915,7 @@ Do work
 		}
 	});
 
-	it("bundled standard agents keep bounded tool allowlists", () => {
+	it("bundled standard agents preserve their roles without fixed tool allowlists", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-"));
 		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagents-builtin-supervisor-tool-home-"));
 		tempDirs.push(dir);
@@ -1925,18 +1927,11 @@ Do work
 			process.env.HOME = homeDir;
 			process.env.USERPROFILE = homeDir;
 			const agents = discoverAgentsAll(dir).builtin;
-			const expectedTools = {
-				worker: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-				delegate: ["read", "grep", "find", "ls", "bash", "edit", "write", "contact_supervisor"],
-				reviewer: ["read", "grep", "find", "ls", "contact_supervisor"],
-				scout: ["read", "grep", "find", "ls", "bash", "write", "contact_supervisor"],
-				researcher: ["read", "write", "web_search", "fetch_content", "get_search_content", "source_check"],
-				"evidence-auditor": ["read", "web_search", "fetch_content", "get_search_content", "source_check"],
-			};
-			for (const [name, tools] of Object.entries(expectedTools)) {
+			for (const name of ["worker", "delegate", "reviewer", "scout", "oracle", "researcher", "evidence-auditor"]) {
 				const agent = agents.find((candidate) => candidate.name === name);
 				assert.ok(agent, `${name} builtin should be discovered`);
-				assert.deepEqual(agent?.tools, tools);
+				assert.equal(agent?.tools, undefined);
+				assert.deepEqual(agent?.excludeTools, ["subagent"]);
 			}
 
 			const auditor = agents.find((candidate) => candidate.name === "evidence-auditor");
@@ -1945,12 +1940,12 @@ Do work
 
 			const researcherPrompt = agents.find((candidate) => candidate.name === "researcher")?.systemPrompt ?? "";
 			assert.match(researcherPrompt, /search-result summaries as discovery aids, not final evidence/);
-			assert.match(researcherPrompt, /source_check.*decision-critical or disputed claims/);
+			assert.match(researcherPrompt, /Verify decision-critical or disputed claims/);
 			assert.match(researcherPrompt, /direct evidence, source interpretation, and researcher inference distinctly/);
 			assert.match(researcherPrompt, /Record contradictions.*Record missing evidence/);
 			assert.match(researcherPrompt, /Never invent dates, quotations, citations, or unsupported precision/);
-			assert.match(researcherPrompt, /`source_check` must be registered by the loaded provider before launch/);
-			assert.match(researcherPrompt, /If a registered `source_check` call fails, continue/);
+			assert.match(researcherPrompt, /Use `source_check` when available and useful/);
+			assert.match(researcherPrompt, /otherwise inspect the sources directly/);
 			assert.match(researcherPrompt, /\*\*Support:\*\* direct evidence \| interpretation\. \*\*Confidence:\*\* high \| medium \| low/);
 		} finally {
 			if (previousHome === undefined) delete process.env.HOME;

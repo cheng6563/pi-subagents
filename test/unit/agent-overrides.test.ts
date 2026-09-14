@@ -127,18 +127,18 @@ describe("builtin agent overrides", () => {
 		assert.equal(researcher?.mcpDirectTools, undefined);
 	});
 
-	it("keeps strict builtin tools unless a role opts into inheritance", () => {
+	it("keeps other native tool defaults when one role explicitly narrows its tools", () => {
 		writeJson(path.join(tempHome, ".pi", "agent", "settings.json"), {
 			subagents: {
 				agentOverrides: {
-					researcher: { tools: "inherit" },
+					researcher: { tools: ["read"] },
 				},
 			},
 		});
 
 		const builtins = discoverAgentsAll(tempProject).builtin;
-		assert.equal(builtins.find((agent) => agent.name === "researcher")?.tools, undefined);
-		assert.deepEqual(builtins.find((agent) => agent.name === "reviewer")?.tools, ["read", "grep", "find", "ls", "contact_supervisor"]);
+		assert.deepEqual(builtins.find((agent) => agent.name === "researcher")?.tools, ["read"]);
+		assert.equal(builtins.find((agent) => agent.name === "reviewer")?.tools, undefined);
 	});
 
 	it("keeps explicit empty builtin tool allowlists distinct from inherited tools", () => {

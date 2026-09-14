@@ -186,15 +186,11 @@ Native `oracle` runs inside Pi and can use its configured read tools. The Claude
 | `external-job-requests/` and `external-job-responses/` | Host-mediated provider bridge | pending request, terminal response | Host process writes a matching response and removes the request | Bridge timeout or malformed request response | Requests are operation-scoped. Recovery sends `reattach`/`result`, not `start` or `follow-up`, when job metadata exists. `start` and `follow-up` use durable dispatch claims | Provider not registered, host bridge not loaded, malformed request, provider exception, ambiguous dispatch without a provider job id |
 | Provider artifact path | External provider | provider-defined terminal artifact | Provider returns `artifactPath`, or Pi writes returned text to `external-job-<index>.result.md` | Provider reports failure or no result | Existing artifact path is retained in `status.json` | Missing artifact with no text output returns a terminal message instead of inventing content |
 
-### Web research prerequisites
+### Web research tools
 
-The `researcher` and `evidence-auditor` builtins use `web_search`, `fetch_content`, `get_search_content`, and selective `source_check` validation. Those require [pi-web-access](https://github.com/nicobailon/pi-web-access):
+The `researcher` and `evidence-auditor` builtins use the child's available search and page-reading tools. They do not require a particular search extension; when `source_check` is available it can supplement direct source inspection. Use the tools' actual schemas and configured preferences.
 
-```bash
-pi install npm:pi-web-access
-```
-
-The provider must be loaded in the child and register all four tools, including `source_check`, before launch; a missing required tool prevents a successful run. Foreground children do not load ambient parent extensions: configure `extensions` or `subagentOnlyExtensions` explicitly, or use background extension discovery as described in [Tool and extension selection](#tool-and-extension-selection). For `researcher`, fetched-source inspection is a fallback for a registered `source_check` call failing, not for missing registration.
+Foreground children do not load ambient parent extensions: configure `extensions` or `subagentOnlyExtensions` explicitly, or use background extension discovery as described in [Tool and extension selection](#tool-and-extension-selection).
 
 ## Overriding builtins and custom agents
 
@@ -427,6 +423,8 @@ How it works:
 `refine.show` prints the current overlay and revision history. Delete the overlay file to remove the refinement entirely.
 
 ## Tool and extension selection
+
+The native builtins omit `tools` and set `excludeTools: subagent`: normal tools and background ambient extensions remain available, while further delegation belongs to the parent. Role responsibilities and the assigned task still limit what work is authorized. Set `maxSubagentDepth: 1` in the operator's subagent config to enforce one child level even for custom agents. Explicit user/project tool overrides and capability ceilings remain authoritative.
 
 How `tools` behaves:
 
