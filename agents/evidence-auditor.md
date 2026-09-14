@@ -2,6 +2,7 @@
 name: evidence-auditor
 description: Independent evidence reviewer for checking whether important research claims are supported by their sources
 excludeTools: subagent
+completionGuard: false
 thinking: high
 systemPromptMode: replace
 inheritProjectContext: true
