@@ -52,9 +52,9 @@ subagent({ task: "按任务要求分层检索。", maxDepth: 2 })
 
 根父会话为深度 0，默认 `maxDepth: 1` 只允许启动一层。显式 `maxDepth: 2` 时第一层可再启动一层。后代默认继承原绝对上限，剩余深度为 `maxDepth - depth`，只能降低、不能增加或重置。恢复沿用原深度，不重新计为第一层。
 
-深度授权绑定在运行器闭包，子代理不能通过工具参数或改环境变量增大执行器额度。`subagent` 在叶子仍可用于向父会话报告，但新启动会报深度耗尽。工具拦截器检查直接 CLI、命令参数、引用的本地脚本和 npm/pnpm/yarn 脚本，拒绝可识别的 Pi/Claude/Codex 等代理启动以及 SDK 包装绕行；远端命令字段也经过检查。
+深度授权绑定在运行器闭包，后代不能通过参数增大执行器额度。额度耗尽时，不注册或提供 `subagent` 工具；尚有额度时提供该工具，后续调用仍受继承上限约束。
 
-**边界不是操作系统沙箱。** 保留任意本机代码执行与扩展能力的同时，无法保证阻止混淆代码、动态下载、原生程序或自定义远端工具绕行。该检查不能作为对抗恶意子代理的安全隔离。需要这种强保证时，必须另行部署 OS/容器权限隔离；不能把文字规则或命令扫描当成强隔离证据。
+限制仅作用于 `subagent` 工具。Bash、脚本、远端命令及其他工具和扩展照常使用，本扩展不检查或拦截其中的 Pi、Codex 等命令。
 
 ## 状态、取消与恢复
 
@@ -74,7 +74,7 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 - `resume` 返回新 ID，复制原会话至新目录，保留原模型、要求、深度、cwd 和上下文；管理操作不接受覆盖这些启动参数。已恢复的旧 ID 指向后继，拒绝重复恢复。
 - 启动前失败且尚未提交 prompt 时可重试原任务；prompt 已开始而会话文件丢失时拒绝自动重放。失败后先查看状态、日志、产物与已发生的副作用，再恢复。
 - 父会话退出或 reload 会暂停其子运行；进程意外退出留下的非终态记录在查询时明确标为失败。旧角色版运行不自动迁移，不假装继承其策略。
-- 子代理可用 `subagent({ action: "report", message: "需要父线程确认的信息" })` 非阻塞报告；父线程通过 steer 回复。报告不自动扩大任务权限。
+- `subagent` 工具可用的子代理可用 `subagent({ action: "report", message: "需要父线程确认的信息" })` 非阻塞报告；叶子子代理通过正常回复交回结果。父线程可通过 steer 补充信息。
 
 状态和产物放在 Windows `%LOCALAPPDATA%/PiSubagents/<父会话ID>/<运行ID>/`，其他系统以临时目录代替 LOCALAPPDATA。子运行目录含 `contract.json`、`status.json`、`events.jsonl`、`runner.log`、`session/`、`output.md`。后代记录在父运行的 `children/` 中。工具文本超过 24,000 字符时截断，完整结果读取 `outputPath`。不自动删除恢复材料。
 
@@ -107,4 +107,4 @@ PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi npm run
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/startup-cancel.mts
 ```
 
-单元测试覆盖要求快照、模型解析、深度与命令边界。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、派生、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。
+单元测试覆盖要求快照、模型解析、深度与运行提示。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、工具可用性、派生、Bash/脚本执行、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。

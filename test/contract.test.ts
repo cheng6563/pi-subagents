@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { childDepth, readRequirements, selectModel, requirementsPrompt, validateContract, type Contract } from "../src/contract.ts";
 import { createRun, readContract, lockResume } from "../src/store.ts";
-import { commandBlockReason, toolCommandBlockReason } from "../src/guard.ts";
 
 const model = { provider: "test", id: "parent", thinking: "off" as const };
 function contract(cwd: string): Contract { return { version: 1, task: "task", cwd, model, context: "fresh", depth: childDepth(undefined), timeoutMs: 1000 }; }
@@ -70,17 +69,10 @@ test("UTF-8 Markdown snapshot is durable across mutation/deletion; invalid reads
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("CLI and script launch guard blocks direct, interpreter, nested script, package and remote paths", () => {
-	const dir = mkdtempSync(join(tmpdir(), "subagent-guard-test-"));
-	try {
-		for (const cmd of ['pi -p hello', 'env -u PI_SUBAGENT_CHILD pi --no-extensions -p hi', '"C:/node/pi.cmd" -p hi', 'python3 -c "import subprocess; subprocess.run([\'pi\', \'-p\', \'hi\'])"', 'node -e "createAgentSession()"', 'ssh host "codex exec hi"']) assert.ok(commandBlockReason(cmd, dir), cmd);
-		writeFileSync(join(dir, "inner.py"), "import subprocess\nsubprocess.run(['pi', '-p', 'task'])", "utf8");
-		writeFileSync(join(dir, "outer.sh"), "python3 inner.py", "utf8");
-		assert.ok(commandBlockReason("bash outer.sh", dir));
-		writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { test: "node ./inner.py" } }), "utf8");
-		assert.ok(commandBlockReason("npm test", dir));
-		assert.ok(toolCommandBlockReason("cascade_remote_bash", { command: "pi -p task" }, dir));
-		assert.equal(commandBlockReason("git status --short", dir), undefined);
-		assert.equal(commandBlockReason("python3 -c 'print(2 + 2)'", dir), undefined);
-	} finally { rmSync(dir, { recursive: true, force: true }); }
+test("child prompt describes only the subagent tool depth", () => {
+	const leaf = requirementsPrompt(contract("."));
+	assert.match(leaf, /subagent tool is disabled/);
+	const parent = requirementsPrompt({ ...contract("."), depth: { depth: 1, maxDepth: 2 } });
+	assert.match(parent, /tool inherits this ceiling/);
+	assert.doesNotMatch(`${leaf}\n${parent}`, /CLI|scripts|SDK wrappers|remote commands/);
 });

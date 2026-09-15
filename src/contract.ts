@@ -71,7 +71,7 @@ export function forkMessages(messages: readonly AgentMessage[]): AgentMessage[] 
 export function requirementsPrompt(contract: Contract): string {
 	return [
 		"You are a general child executor. Follow the supplied task and applicable environment instructions. No role or acceptance policy is implied by this executor.",
-		`Delegation depth: ${contract.depth.depth}/${contract.depth.maxDepth}. Further delegation must use subagent within this inherited ceiling; never launch agents through CLI, scripts, SDK wrappers, or remote commands. Report blockers and actual results to the parent.`,
+		`Subagent tool depth: ${contract.depth.depth}/${contract.depth.maxDepth}. ${contract.depth.depth < contract.depth.maxDepth ? "The subagent tool inherits this ceiling and cannot increase it." : "The subagent tool is disabled in this session."} Report blockers and actual results to the parent.`,
 		contract.requirements ? `Requirements loaded from ${JSON.stringify(contract.requirements.path)} (SHA-256 ${contract.requirements.sha256}):\n\n${contract.requirements.text}` : "",
 	].filter(Boolean).join("\n\n");
 }

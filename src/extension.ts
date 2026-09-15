@@ -7,7 +7,6 @@ import { childDepth, readRequirements, selectModel, forkMessages, type Depth, ty
 import { RunController, type Notice } from "./controller.ts";
 import { storeRoot } from "./store.ts";
 import { getAgentDir } from "./shared/utils.ts";
-import { toolCommandBlockReason, commandBlockReason } from "./guard.ts";
 
 export const parameters = Type.Object({
 	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const)),
@@ -53,6 +52,7 @@ export interface ChildBinding {
 export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void {
 	// Child authority is closure-bound. It is never recovered from a model-controlled environment variable.
 	const depth = binding ? Object.freeze({ ...binding.depth }) : undefined;
+	if (depth && depth.depth >= depth.maxDepth) return;
 	let controller: RunController | undefined;
 	let currentSessionId: string | undefined;
 	function getController(ctx: ExtensionContext): RunController {
@@ -71,7 +71,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 	}
 	pi.registerTool({
 		name: "subagent", label: "Subagent",
-		description: "Run one generic Pi child with task and optional requirementsFile; no named roles or inferred review/acceptance policy. Parent model and fresh context are defaults. maxDepth defaults to 1 and descendants cannot enlarge it. Normal tools/extensions load. Async completion notifies the parent. Use exact run IDs for status, result, wait, cancel, interrupt, resume and steer; resume preserves loaded requirements/model/depth and returns a new ID. Inspect failed-run evidence before resuming; no automatic replay or model fallback. Output text is truncated at 24,000 characters; full result is at outputPath. A child can report to its parent with action:report.",
+		description: "Run one generic Pi child with task and optional requirementsFile; no named roles or inferred review/acceptance policy. Parent model and fresh context are defaults. maxDepth defaults to 1 and descendants cannot enlarge it. At the depth ceiling, the child has no subagent tool. Other tools/extensions load normally. Async completion notifies the parent. Use exact run IDs for status, result, wait, cancel, interrupt, resume and steer; resume preserves loaded requirements/model/depth and returns a new ID. Inspect failed-run evidence before resuming; no automatic replay or model fallback. Output text is truncated at 24,000 characters; full result is at outputPath. A child can report to its parent with action:report.",
 		parameters,
 		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
 			if (signal?.aborted) throw new Error("Subagent call was cancelled before launch");
@@ -118,16 +118,6 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 			return response(run);
 		},
 	});
-	if (binding) {
-		pi.on("tool_call", (event, ctx) => {
-			const reason = toolCommandBlockReason(event.toolName, event.input, ctx.cwd);
-			if (reason) return { block: true, reason };
-		});
-		pi.on("user_bash", (event) => {
-			const reason = commandBlockReason(event.command, event.cwd);
-			if (reason) return { result: { output: reason, exitCode: 1, cancelled: false, truncated: false } };
-		});
-	}
 	pi.on("session_shutdown", async () => { await controller?.shutdown(); controller = undefined; currentSessionId = undefined; });
 }
 

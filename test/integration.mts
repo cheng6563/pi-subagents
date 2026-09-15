@@ -30,7 +30,6 @@ const server = createServer(async (req, res) => {
     for await (const chunk of req) parts.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(parts).toString("utf8"));
     captures.push(body);
-    const text = JSON.stringify(body.messages);
     const users = body.messages.filter((m: any) => m.role === "user");
     const caseName = [...users].reverse().map((m: any) => JSON.stringify(m.content).match(/CASE_[A-Z_]+/)?.[0]).find(Boolean);
     const toolMessages = body.messages.filter((m: any) => m.role === "tool");
@@ -42,15 +41,22 @@ const server = createServer(async (req, res) => {
     let answer = `${caseName}_OK`;
     if (!hasTool) {
       if (caseName === "CASE_DEFAULT" || caseName === "CASE_FAIL") tool = { name: "probe", arguments: {} };
-      if (caseName === "CASE_BLOCK" || caseName === "CASE_LEAF") tool = { name: "subagent", arguments: { task: "CASE_TOO_DEEP", async: false } };
+      if (["CASE_DEFAULT", "CASE_DISABLED", "CASE_LEAF"].includes(caseName)) {
+        const names = body.tools.map((t: any) => t.function.name);
+        assert.ok(!names.includes("subagent"), "leaf must not expose the subagent tool");
+        for (const name of ["bash", "read", "write", "probe"]) assert.ok(names.includes(name), `${name} must remain available`);
+      }
+      if (["CASE_NEST", "CASE_INCREASE"].includes(caseName)) assert.ok(body.tools.some((t: any) => t.function.name === "subagent"));
       if (caseName === "CASE_INCREASE") tool = { name: "subagent", arguments: { task: "CASE_TOO_DEEP", maxDepth: 999, async: false } };
       if (caseName === "CASE_NEST") tool = { name: "subagent", arguments: { task: "CASE_LEAF", async: false } };
-      if (caseName === "CASE_CLI") tool = { name: "bash", arguments: { command: "pi -p CASE_TOO_DEEP" } };
-      if (caseName === "CASE_SCRIPT") tool = { name: "bash", arguments: { command: "python3 bypass.py" } };
+      if (caseName === "CASE_CLI") tool = { name: "bash", arguments: { command: "pi() { printf 'PI_STUB_OK'; }; codex() { printf 'CODEX_STUB_OK'; }; pi; codex" } };
+      if (caseName === "CASE_SCRIPT") tool = { name: "bash", arguments: { command: "bash launch.sh" } };
     } else {
-      if (["CASE_BLOCK", "CASE_LEAF"].includes(caseName)) assert.match(JSON.stringify(latestTool), /depth exhausted/);
       if (caseName === "CASE_INCREASE") assert.match(JSON.stringify(latestTool), /Cannot increase/);
-      if (["CASE_CLI", "CASE_SCRIPT"].includes(caseName)) assert.match(JSON.stringify(latestTool), /outside subagent is forbidden/);
+      if (["CASE_CLI", "CASE_SCRIPT"].includes(caseName)) {
+        assert.match(JSON.stringify(latestTool), /PI_STUB_OK/);
+        assert.match(JSON.stringify(latestTool), /CODEX_STUB_OK/);
+      }
       if (caseName === "CASE_NEST") assert.match(JSON.stringify(latestTool), /CASE_LEAF_OK/);
     }
     if (caseName === "CASE_TOO_DEEP") throw new Error("Depth boundary bypassed: forbidden provider request received");
@@ -72,7 +78,7 @@ writeFileSync(join(agentDir, "shared-models.json"), JSON.stringify({ lowCost: { 
 writeFileSync(join(agentDir, "AGENTS.md"), "ENVIRONMENT_MARKER", "utf8");
 const marker = join(root, "probe-count.txt");
 writeFileSync(join(agentDir, "extensions", "probe.ts"), `import { Type } from 'typebox';\nimport { appendFileSync } from 'node:fs';\nexport default function(pi) { pi.registerTool({ name:'probe', label:'Probe', description:'Runtime probe', parameters:Type.Object({}), async execute() { appendFileSync(${JSON.stringify(marker)}, 'probe\\n', 'utf8'); return {content:[{type:'text',text:'PROBE_OK'}]}; } }); }`, "utf8");
-writeFileSync(join(cwd, "bypass.py"), "import subprocess\nsubprocess.run(['pi', '-p', 'CASE_TOO_DEEP'])", "utf8");
+writeFileSync(join(cwd, "launch.sh"), "pi() { printf 'PI_STUB_OK'; }\ncodex() { printf 'CODEX_STUB_OK'; }\npi\ncodex\n", "utf8");
 const md = join(cwd, "要求.md");
 writeFileSync(md, "ORIGINAL_REQUIREMENTS_中文", "utf8");
 const tools = new Map<string, any>();
@@ -98,7 +104,21 @@ async function scenario(name: string, params: object, expected = "completed") {
 }
 try {
   assert.deepEqual([...tools.keys()], ["subagent"]);
-  if (process.env.SUBAGENT_INTEGRATION_CASE === "wait") {
+  for (const depth of [{ depth: 1, maxDepth: 1 }, { depth: 1, maxDepth: 2 }]) {
+    const registered: string[] = [];
+    const events: string[] = [];
+    registerExecutor({ registerTool: (t: any) => registered.push(t.name), on: (name: string) => events.push(name) }, { depth, root, report() {}, onController() {} });
+    assert.deepEqual(registered, depth.depth < depth.maxDepth ? ["subagent"] : []);
+    assert.ok(!events.includes("tool_call") && !events.includes("user_bash"));
+  }
+  if (process.env.SUBAGENT_INTEGRATION_CASE === "tools") {
+    await scenario("CASE_DEFAULT", {});
+    await scenario("CASE_DISABLED", {});
+    await scenario("CASE_INCREASE", { maxDepth: 2 });
+    await scenario("CASE_NEST", { maxDepth: 2 });
+    await scenario("CASE_CLI", {});
+    await scenario("CASE_SCRIPT", {});
+  } else if (process.env.SUBAGENT_INTEGRATION_CASE === "wait") {
     const held = await call({ task: "CASE_HOLD" });
     const waiting = new AbortController();
     const pending = tools.get("subagent").execute(randomUUID(), { action: "wait", id: held.id }, waiting.signal, undefined, ctx);
@@ -132,7 +152,7 @@ try {
   const mdRequest = captures.find((c) => JSON.stringify(c.messages).includes("CASE_MD"));
   assert.equal(mdRequest.model, "cheap");
   assert.match(JSON.stringify(mdRequest), /ORIGINAL_REQUIREMENTS_中文/);
-  await scenario("CASE_BLOCK", {});
+  await scenario("CASE_DISABLED", {});
   await scenario("CASE_INCREASE", { maxDepth: 2 });
   await scenario("CASE_NEST", { maxDepth: 2 });
   await scenario("CASE_CLI", {});
