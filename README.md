@@ -1,4 +1,4 @@
-# Pi 通用子代理执行器
+# Pi 通用 subagents 执行器
 
 这是基于原 pi-subagents 运行时代码裁剪、独立维护的实现。保留 MIT 许可及历史提交，不常规合并或同步上游；只按需评估具体修复。仅提供一个通用 `subagent` 执行器，任务方法与业务标准由调用方提供。
 
@@ -32,17 +32,17 @@ subagent({
 
 - 不传 `action` 为新运行，`task` 必填。没有 `agent`、内置角色、自定义角色目录、工作流脚本、自动审核或验收参数。
 - 启动设置放在 `options` 对象中：`requirementsFile`、`model`、`maxDepth`、`context`、`cwd`、`timeoutMs`。省略 `options` 即使用默认值；运行时拒绝未知字段和错误类型。`async` 保持为顶层参数，启动和恢复均可使用。
-- `options.requirementsFile` 是 UTF-8 `.md` 文件，相对路径基于**调用者 cwd**，不受子代理 `options.cwd` 参数影响。启动前检查并读取，读取失败、非法 UTF-8 或非普通文件明确报错，不启动子代理。
+- `options.requirementsFile` 是 UTF-8 `.md` 文件，相对路径基于**调用者 cwd**，不受 subagents 的 `options.cwd` 参数影响。启动前检查并读取，读取失败、非法 UTF-8 或非普通文件明确报错，不启动 subagents。
 - 实际内容、来源路径和 SHA-256 保存在本次 `contract.json`。恢复直接使用这一快照，不再读取原 MD；删除或修改源文件不影响恢复。
 - `options.model` 默认继承父会话的确切 provider/model 和 thinking level。可传 `shared:lowCost`，复用 `~/.pi/agent/shared-models.json` 解析，也可显式传 `provider/model[:thinking]`。
 - shared 配置、模型或凭据不可用会失败；运行时接口错误记录为失败，不换模型。Pi 自身同模型重试由常规 Pi 设置控制。
 - `options.cwd` 默认调用者目录，`options.timeoutMs` 默认 30 分钟，超时暂停而非重新执行。
 - `async` 默认 `true`，返回 ID 后由完成通知唤醒父会话；`false` 等待同一个运行器完成，过程中更新运行卡片，结果仅由工具返回，不再追加完成通知。同步恢复遵循同样规则。不存在能力不同的第二条前台执行链。
-- 对仍在运行的异步任务调用 `wait`，完成结果由等待调用接收，不再追加通知；中断等待后恢复异步通知。已经发送的通知不会因后续查询而撤回。子代理主动 `report` 不受完成通知去重影响。
+- 对仍在运行的异步任务调用 `wait`，完成结果由等待调用接收，不再追加通知；中断等待后恢复异步通知。已经发送的通知不会因后续查询而撤回。subagents 主动 `report` 不受完成通知去重影响。
 
 ## 可视化
 
-交互模式的调用卡片只显示一行任务摘要；结果卡片不重复任务正文，默认预览末尾 4 行输出，流式输出时跟随最新内容，展开后按原始换行完整显示。折叠提示显示 Pi 当前绑定的展开快捷键（默认 Ctrl+O），不覆盖用户按键配置。完整任务及路径在展开结果和详情中查看。运行面板仅列出活动任务，空闲时只保留一行记录入口，不重复已完成任务。面板刷新不向模型发送消息。
+交互模式的调用卡片只显示一行任务摘要；结果卡片不重复任务正文，默认预览末尾 4 行输出，流式输出时跟随最新内容，展开后按原始换行完整显示。折叠提示显示 Pi 当前绑定的展开快捷键（默认 Ctrl+O），不覆盖用户按键配置。完整任务及路径在展开结果和详情中查看。运行面板仅在存在活动任务时显示，全部结束后自动隐藏；历史记录通过 `/subagents-fleet` 查看。界面名称统一使用 `subagents`，工具名 `subagent` 保持不变。面板刷新不向模型发送消息。
 
 进度快照属于展示缓存：Windows 暂时拒绝替换 `progress.json` 时保留旧快照，记录非致命错误，下一次正常更新再写入，不中断任务。最终状态以运行记录为准，不使用残留的“输出中”覆盖失败或完成；模型尚未返回用量时显示未知值。
 
@@ -54,9 +54,9 @@ subagent({
 
 ## 上下文与工具
 
-`options.context: "fresh"` 是默认值：不复制父会话历史或父系统提示词。`options.context: "fork"` 显式复制父会话当前分支的对话上下文，包含压缩摘要，但不复制父系统提示词。选择 fork 就意味着原对话中的要求也可能影响子代理。
+`options.context: "fresh"` 是默认值：不复制父会话历史或父系统提示词。`options.context: "fork"` 显式复制父会话当前分支的对话上下文，包含压缩摘要，但不复制父系统提示词。选择 fork 就意味着原对话中的要求也可能影响 subagents。
 
-子代理正常加载当前环境的工具、已配置扩展、skills 和 AGENTS.md；本扩展不扫描角色目录，不自动加载业务方法要求，也不附加独立审核标准。恢复保留原对话和任务快照，但环境扩展、AGENTS.md 等仍从当前环境加载。全局规则不是此扩展的重写对象；更严格的禁止派生指令仍需遵守。
+subagents 正常加载当前环境的工具、已配置扩展、skills 和 AGENTS.md；本扩展不扫描角色目录，不自动加载业务方法要求，也不附加独立审核标准。恢复保留原对话和任务快照，但环境扩展、AGENTS.md 等仍从当前环境加载。全局规则不是此扩展的重写对象；更严格的禁止派生指令仍需遵守。
 
 每个运行使用独立 Node 进程，避免扩展模块状态和环境变量污染父会话。环境扩展加载失败明确失败；不以关闭扩展或禁用工具作为自动补救。
 
@@ -90,7 +90,7 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 - `resume` 返回新 ID，复制原会话至新目录，保留原模型、要求、深度、cwd 和上下文；管理操作不接受 `task` 或 `options`，不能覆盖这些启动参数。已恢复的旧 ID 指向后继，拒绝重复恢复。
 - 启动前失败且尚未提交 prompt 时可重试原任务；prompt 已开始而会话文件丢失时拒绝自动重放。失败后先查看状态、日志、产物与已发生的副作用，再恢复。
 - 父会话退出或 reload 会暂停其子运行；进程意外退出留下的非终态记录在查询时明确标为失败。旧角色版运行不自动迁移，不假装继承其策略。
-- `subagent` 工具可用的子代理可用 `subagent({ action: "report", message: "需要父线程确认的信息" })` 非阻塞报告；叶子子代理通过正常回复交回结果。父线程可通过 steer 补充信息。
+- `subagent` 工具可用的 subagents 可用 `subagent({ action: "report", message: "需要父线程确认的信息" })` 非阻塞报告；叶子 subagents 通过正常回复交回结果。父线程可通过 steer 补充信息。
 
 状态和产物放在 Windows `%LOCALAPPDATA%/PiSubagents/<父会话ID>/<运行ID>/`，其他系统以临时目录代替 LOCALAPPDATA。子运行目录含 `contract.json`、`status.json`、`progress.json`、`events.jsonl`、`runner.log`、`session/`、`output.md`。后代记录在父运行的 `children/` 中。工具文本超过 24,000 字符时截断，完整结果读取 `outputPath`。不自动删除恢复材料。
 
@@ -127,7 +127,7 @@ PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --
 
 单元测试覆盖要求快照、模型解析、深度、运行提示、完成交付归属和实时进度。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、工具可用性、派生、Bash/脚本执行、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。
 
-在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、中文 MD 与低成本选择、两层派生及禁止增加深度、101 行输出、暂停后恢复原要求快照；测试同时断言同步结果没有完成通知、请求中不发送 `strict`，会产生实际模型请求：
+在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实 subagents，验证默认工具可用性、中文 MD 与低成本选择、两层派生及禁止增加深度、101 行输出、暂停后恢复原要求快照；测试同时断言同步结果没有完成通知、请求中不发送 `strict`，会产生实际模型请求：
 
 ```bash
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/tool-call-smoke.mts

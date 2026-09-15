@@ -64,7 +64,9 @@ try {
   assert.ok(commands.has("subagents-fleet") && commands.has("subagents"));
   handlers.get("session_start")({}, ctx);
   assert.equal(typeof widget, "function");
-  assert.match(frame("roster", widget({}, theme)), /UI_ACTIVE_CASE/);
+  const roster = frame("roster", widget({}, theme));
+  assert.match(roster, /^subagents ·/);
+  assert.match(roster, /UI_ACTIVE_CASE/);
   const renderResult = ui.createRunResultRenderer();
   assert.match(frame("completed-card", renderResult({ details: { run: done, output: "# Completed\nUI_OUTPUT_OK" } }, { expanded: true }, theme)), /UI_OUTPUT_OK/);
   assert.match(frame("failed-card", renderResult({ details: { run: failed, output: "" } }, { expanded: false }, theme)), /UI_FAILURE_DETAIL/);
@@ -102,6 +104,7 @@ try {
   writeFileSync(multiline.outputPath, numbers.join("\n"), "utf8");
   const callFrame = frame("multiline-call", ui.renderRunCall({ task: longTask, async: false }, theme));
   assert.equal(callFrame.split("\n").length, 1);
+  assert.match(callFrame, /^subagents /);
   assert.doesNotMatch(callFrame, /HIDDEN_LONG_INSTRUCTION/);
   const result = { details: { run: multiline, output: numbers.join("\n") } };
   const collapsed = frame("multiline-collapsed", renderResult(result, { expanded: false }, theme));
@@ -130,12 +133,23 @@ try {
   const failedPreview = frame("failed-partial", renderResult({ details: { run: staleFailed, output: "" } }, { expanded: false }, theme));
   assert.match(failedPreview, /未完成输出/);
   assert.doesNotMatch(failedPreview, /输出中|0 tokens/);
-  assert.equal(ui.renderRoster([reader(staleFailed), reader(done)], theme, 100).length, 1, "Idle widget must not repeat finished tasks");
+  assert.equal(ui.renderRoster([reader(staleFailed), reader(done)], theme, 100).length, 0, "Idle roster must render nothing");
   const failedFleet = new ui.FleetComponent(() => [reader(staleFailed)], theme, () => {}, () => {}, () => 35, async () => {});
   const failedFrame = frame("failed-authoritative-state", failedFleet);
   assert.match(failedFrame, /当前：失败/);
   assert.doesNotMatch(failedFrame, /输出中/);
   failedFleet.dispose();
+  active.status = "completed"; saveRun(active);
+  handlers.get("session_start")({}, ctx);
+  assert.equal(widget, undefined, "All terminal runs must remove the widget, not leave an empty component");
+  const history = commands.get("subagents-fleet").handler("", ctx);
+  assert.match(frame("idle-history", component), /subagents 运行详情/);
+  component.handleInput("\x1b");
+  await history;
+  assert.equal(widget, undefined, "Closing history while idle must not restore a status bar");
+  active.status = "running"; saveRun(active);
+  handlers.get("session_start")({}, ctx);
+  assert.equal(typeof widget, "function", "Active runs must restore the widget");
   console.log(`UI_COMPONENTS_PASS ${root}`);
 } finally {
   component?.dispose(); closeCustom?.(); lifecycle.dispose(); tui.setKeybindings(originalKeys);

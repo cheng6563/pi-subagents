@@ -66,13 +66,14 @@ try:
     if real_run is not None:
         def numbers(text):
             return {int(line.strip()) for line in text.splitlines() if re.fullmatch(r"\d{3}", line.strip())}
-        wait_for(lambda text: "前 97 行" in text and "ctrl+o" in text and {97, 98, 99, 100} <= numbers(text), "real-collapsed-card")
+        collapsed = wait_for(lambda text: "前 97 行" in text and "ctrl+o" in text and {97, 98, 99, 100} <= numbers(text), "real-collapsed-card")
+        assert "subagents 同步" in collapsed and "0 运行" not in collapsed, "Idle status bar must be hidden"
         process.write("\x0f")
         wait_for(lambda text: {96, 100} <= numbers(text) and "前 97 行" not in text, "real-expanded-card")
         process.write("\x0f")
         wait_for(lambda text: "前 97 行" in text and {97, 98, 99, 100} <= numbers(text), "real-recollapsed-card")
         process.write("/subagents-fleet\r")
-        first = wait_for(lambda text: "子代理运行详情" in text and 0 in numbers(text), "real-inspector")
+        first = wait_for(lambda text: "subagents 运行详情" in text and 0 in numbers(text), "real-inspector")
         seen = numbers(first)
         for page in range(8):
             if 100 in seen:
@@ -83,7 +84,8 @@ try:
             seen.update(numbers(text))
         assert seen == set(range(101)), f"Missing displayed numbers: {set(range(101)) - seen}"
         process.write("\x1b")
-        wait_for("前 97 行", "real-close-restores-card")
+        closed = wait_for("前 97 行", "real-close-restores-card")
+        assert "0 运行" not in closed, "Closing history must not restore an idle status bar"
     else:
         wait_for("UI_ACTIVE_CASE", "roster")
         progress_file = Path(fixture["progress"])
@@ -94,7 +96,7 @@ try:
         staging.replace(progress_file)
         wait_for("PTY_LIVE_UPDATE", "live-update")
         process.write("/subagents-fleet\r")
-        wait_for("子代理运行详情", "inspector")
+        wait_for("subagents 运行详情", "inspector")
         process.write("\r\x1b[6~")
         wait_for("UI_TRANSCRIPT_TOOL_RESULT", "transcript")
         process.write("\x1b[B")

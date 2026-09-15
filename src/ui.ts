@@ -32,7 +32,7 @@ function activity(v: RunView): string {
 function dynamic(render: (width: number) => string[]): Component { return { render, invalidate() {} }; }
 
 export function renderRunCall(args: Params, theme: Theme): Component {
-	return dynamic(width => [truncateToWidth(`${theme.fg("toolTitle", theme.bold("子代理"))} ${args.action ?? (args.async === false ? "同步" : "启动")} ${args.id?.slice(0, 8) ?? ""}${args.task ? ` · ${brief(args.task, 72)}` : ""}`, width)]);
+	return dynamic(width => [truncateToWidth(`${theme.fg("toolTitle", theme.bold("subagents"))} ${args.action ?? (args.async === false ? "同步" : "启动")} ${args.id?.slice(0, 8) ?? ""}${args.task ? ` · ${brief(args.task, 72)}` : ""}`, width)]);
 }
 export function createRunResultRenderer() {
 	const readView = createViewReader();
@@ -71,13 +71,13 @@ export function createRunResultRenderer() {
 	});
 }
 export function renderRunNotice(notice: Notice, expanded: boolean, theme: Theme): Component {
-	return dynamic(width => new Text(`${theme.fg("accent", "子代理")} ${notice.runId.slice(0, 8)} · ${state(String(notice.status ?? (notice.error ? "failed" : "报告")), theme)}${notice.message ? `\n${notice.message}` : ""}${notice.error ? `\n${notice.error}` : ""}${expanded && notice.outputPath ? `\n产物 ${notice.outputPath}` : ""}`, 0, 0).render(width));
+	return dynamic(width => new Text(`${theme.fg("accent", "subagents")} ${notice.runId.slice(0, 8)} · ${state(String(notice.status ?? (notice.error ? "failed" : "报告")), theme)}${notice.message ? `\n${notice.message}` : ""}${notice.error ? `\n${notice.error}` : ""}${expanded && notice.outputPath ? `\n产物 ${notice.outputPath}` : ""}`, 0, 0).render(width));
 }
 export function renderRoster(views: RunView[], theme: Theme, width: number): string[] {
 	const active = views.filter(v => !isTerminal(v.run.status));
-	if (!views.length) return [];
+	if (!active.length) return [];
 	const visible = active.slice(0, 3);
-	const lines = [theme.fg("dim", `子代理 · ${active.length} 运行 · ${views.length} 记录 · /subagents-fleet`)];
+	const lines = [theme.fg("dim", `subagents · ${active.length} 运行 · ${views.length} 记录 · /subagents-fleet`)];
 	for (const v of visible) lines.push(`${v.run.id.slice(0, 8)} ${activity(v)} · ${elapsed(v.run)} · ${brief(v.task, 36)}`);
 	if (active.length > visible.length) lines.push(theme.fg("dim", `另有 ${active.length - visible.length} 个运行，打开详情查看`));
 	return lines.map(line => truncateToWidth(line, width));
@@ -156,10 +156,10 @@ export class FleetComponent implements Component {
 		return this.transcriptCache.text || "等待会话内容…";
 	}
 	render(width: number): string[] {
-		if (width < 36 || this.height() < 12) return new Text("子代理详情至少需要 36 列、12 行；Esc 关闭。", 0, 0).render(width);
+		if (width < 36 || this.height() < 12) return new Text("subagents 详情至少需要 36 列、12 行；Esc 关闭。", 0, 0).render(width);
 		const t = this.theme;
 		const v = this.views.find(v => v.run.id === this.selectedId);
-		const header = [t.fg("borderMuted", "─".repeat(Math.max(0, width))), t.fg("accent", t.bold("子代理运行详情")), ...this.selection().render(width), t.fg("borderMuted", "─".repeat(Math.max(0, width)))];
+		const header = [t.fg("borderMuted", "─".repeat(Math.max(0, width))), t.fg("accent", t.bold("subagents 运行详情")), ...this.selection().render(width), t.fg("borderMuted", "─".repeat(Math.max(0, width)))];
 		let body: string[] = [];
 		if (v) {
 			const meta = `${state(v.run.status, t)} · ${stats(v)}\n${v.model} · ${v.thinking} · 深度 ${v.depth} · ${v.context}\nID ${v.run.id}${v.run.error ? `\n错误 ${v.run.error}` : ""}`;
@@ -169,7 +169,7 @@ export class FleetComponent implements Component {
 				text = this.transcript ? this.conversation(v) : `当前：${activity(v)}\n\n${isTerminal(v.run.status) && v.run.status !== "completed" ? "未完成输出" : "输出"}\n${saved || v.progress?.text || "等待输出…"}\n\n任务\n${v.task}${v.progress?.toolInput ? `\n\n最近工具输入：${v.progress.toolInput}` : ""}${v.progress?.toolOutput ? `\n\n最近工具输出：\n${v.progress.toolOutput}` : ""}\n\n目录 ${v.cwd}${v.requirements ? `\n要求 ${v.requirements}` : ""}\n产物 ${v.run.outputPath}${v.run.sessionFile ? `\n会话 ${v.run.sessionFile}` : ""}`;
 			} catch (error) { text = `读取失败：${String(error)}`; }
 			body = [...new Text(meta, 0, 0).render(width), ...new Text(text, 0, 0).render(width)];
-		} else body = ["当前会话没有子代理运行。"];
+		} else body = ["当前会话没有 subagents 运行。"];
 		const help = new Text(`↑↓ 选择 · Enter/Tab ${this.transcript ? "概览" : "会话"} · PgUp/PgDn 滚动\np 暂停 · D 取消 · c 恢复 · s 补充 · r 刷新 · Esc 关闭${this.notice ? `\n${this.notice}` : ""}`, 0, 0).render(width);
 		this.pageSize = Math.max(1, this.height() - header.length - help.length - 2);
 		this.scroll = Math.min(this.scroll, Math.max(0, body.length - this.pageSize));
@@ -194,8 +194,8 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 		if (!context?.hasUI) return;
 		try {
 			const current = views(context);
-			context.ui.setWidget(widgetKey, current.length && !fleetOpen ? (_tui, theme) => dynamic(width => renderRoster(current, theme, width)) : undefined);
-		} catch (error) { context.ui.setWidget(widgetKey, [`子代理状态读取失败：${String(error)}`]); }
+			context.ui.setWidget(widgetKey, current.some(v => !isTerminal(v.run.status)) && !fleetOpen ? (_tui, theme) => dynamic(width => renderRoster(current, theme, width)) : undefined);
+		} catch (error) { context.ui.setWidget(widgetKey, [`subagents 状态读取失败：${String(error)}`]); }
 	};
 	const attach = (ctx: ExtensionContext) => {
 		if (!ctx.hasUI) return;
@@ -214,8 +214,8 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 				const component = new FleetComponent(() => views(ctx), theme, () => tui.requestRender(), () => done(), () => Math.floor(tui.terminal.rows * 0.9), async (action, view) => {
 					const c = getController(ctx);
 					if (resolve(view.run.dir) !== resolve(c.root, view.run.id)) throw new Error("后代运行仅供查看；控制操作须交给它所属的父代理。");
-					if (action === "steer") { const message = await ctx.ui.input("补充子代理任务", view.run.id); if (!message?.trim()) return false; c.steer(view.run.id, message); return; }
-					if (!await ctx.ui.confirm({ pause: "暂停子代理", cancel: "取消子代理（不可恢复）", resume: "使用保存的会话恢复子代理" }[action], `${view.run.id}\n${view.task}`)) return false;
+					if (action === "steer") { const message = await ctx.ui.input("补充 subagents 任务", view.run.id); if (!message?.trim()) return false; c.steer(view.run.id, message); return; }
+					if (!await ctx.ui.confirm({ pause: "暂停 subagents", cancel: "取消 subagents（不可恢复）", resume: "使用保存的会话恢复 subagents" }[action], `${view.run.id}\n${view.task}`)) return false;
 					if (action === "resume") await c.resume(view.run.id, undefined);
 					else await c.cancel(view.run.id, action === "pause");
 				});
@@ -224,8 +224,8 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 			}, { overlay: true, overlayOptions: { width: "100%", maxHeight: "90%", anchor: "center" } });
 		} finally { if (refreshTimer) clearInterval(refreshTimer); fleetOpen = false; refresh(); }
 	};
-	pi.registerCommand("subagents-fleet", { description: "查看子代理实时状态、完整会话及运行控制", handler: open });
-	pi.registerCommand("subagents", { description: "打开子代理运行详情", handler: open });
+	pi.registerCommand("subagents-fleet", { description: "查看 subagents 实时状态、完整会话及运行控制", handler: open });
+	pi.registerCommand("subagents", { description: "打开 subagents 运行详情", handler: open });
 	pi.registerMessageRenderer<Notice>("subagent-notice", (message, options, theme) => message.details ? renderRunNotice(message.details, options.expanded, theme) : new Text(contentText(message.content), 0, 0));
 	pi.on("session_start", (_event, ctx) => attach(ctx));
 	return { attach, dispose() { if (timer) clearInterval(timer); timer = undefined; context?.ui.setWidget(widgetKey, undefined); context = undefined; } };

@@ -90,7 +90,7 @@ export class RunController {
 				saveRun(current); event(current, "runner_exit", { error: current.error, status: current.status });
 			}
 			this.live.delete(run.id);
-			readyReject(new Error(`Subagent ${run.id} ${current.status}: ${current.error ?? "exited before ready"}. Evidence: ${run.dir}`));
+			readyReject(new Error(`subagents ${run.id} ${current.status}: ${current.error ?? "exited before ready"}. Evidence: ${run.dir}`));
 			doneResolve(current);
 			// Before ready, the launch call itself receives the failure; there is no async handoff.
 			if (readySeen) delivery.complete((channel) => {

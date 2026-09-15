@@ -54,13 +54,13 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 	}
 	const ui = binding ? undefined : registerRunUI(pi, getController);
 	pi.registerTool({
-		name: "subagent", label: "Subagent",
+		name: "subagent", label: "subagents",
 		description: "Run one generic Pi child with task and optional options {requirementsFile, model, maxDepth, context, cwd, timeoutMs}; no named roles or inferred review/acceptance policy. Parent model and fresh context are defaults. options.maxDepth defaults to 1 and descendants cannot enlarge it. At the depth ceiling, the child has no subagent tool. Other tools/extensions load normally. Async completion notifies the parent. Use exact run IDs for status, result, wait, cancel, interrupt, resume and steer; resume preserves loaded requirements/model/depth and returns a new ID. Inspect failed-run evidence before resuming; no automatic replay or model fallback. Output text is truncated at 24,000 characters; full result is at outputPath. A child can report to its parent with action:report.",
 		parameters,
 		async execute(_callId, input: Params, signal, onUpdate, ctx) {
 			const params = validateParams(input);
 			const options = params.options ?? {};
-			if (signal?.aborted) throw new Error("Subagent call was cancelled before launch");
+			if (signal?.aborted) throw new Error("subagents call was cancelled before launch");
 			const defaults = loadDefaults();
 			const asynchronous = params.async ?? defaults.asyncByDefault;
 			const c = getController(ctx);
@@ -72,7 +72,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 						const run = c.status(id);
 						const progress = readProgress(run);
 						const key = `${run.status}:${progress?.updatedAt}:${Math.floor(Date.now() / 1000)}`;
-						if (key !== last) { last = key; onUpdate?.({ content: [{ type: "text", text: `子代理 ${id} · ${progress?.activity ?? run.status}` }], details: { run, progress } }); }
+						if (key !== last) { last = key; onUpdate?.({ content: [{ type: "text", text: `subagents ${id} · ${progress?.activity ?? run.status}` }], details: { run, progress } }); }
 					} catch (error) { console.error(JSON.stringify({ event: "subagent_progress_read_failed", runId: id, error: String(error) })); }
 				};
 				const timer = onUpdate ? setInterval(update, 250) : undefined;
