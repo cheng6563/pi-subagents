@@ -97,6 +97,8 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 }
 ```
 
+使用 OpenAI Responses 时，若端点支持 `strict` 字段，在对应模型的 `models.json` 配置中设置 `"compat": { "supportsStrictMode": true }`。这让 Pi 对普通工具显式发送 `strict: false`，保留可选参数语义，并非要求工具采用严格模式。部分 Responses 端点在省略 `strict` 时会把可选字段全部变成必填，导致无法省略启动时的 `action`。
+
 ## 开发验证
 
 ```bash
@@ -108,3 +110,9 @@ PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --
 ```
 
 单元测试覆盖要求快照、模型解析、深度与运行提示。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、工具可用性、派生、Bash/脚本执行、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。
+
+在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、两层派生和禁止增加深度；会产生实际模型请求：
+
+```bash
+PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/tool-call-smoke.mts
+```
