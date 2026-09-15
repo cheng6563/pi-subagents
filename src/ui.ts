@@ -30,7 +30,7 @@ function activity(v: RunView): string {
 }
 function dynamic(render: (width: number) => string[]): Component { return { render, invalidate() {} }; }
 
-export const LIVE_PANEL_ROWS = 8;
+export const LIVE_PANEL_MAX_ROWS = 8;
 export function tailPreview(text: string, width: number, count = 4): { lines: string[]; hidden: number } {
 	const lines = text.replace(/\r\n/g, "\n").split("\n");
 	return {
@@ -135,7 +135,7 @@ export function renderRoster(views: RunView[], theme: Theme, width: number, pend
 		visit(children.get(view.run.id) ?? [], `${prefix}${last ? "   " : "│  "}`);
 	});
 	visit(roots.filter(v => activeRoots.has(v.run.id)), "");
-	const capacity = LIVE_PANEL_ROWS - 1;
+	const capacity = LIVE_PANEL_MAX_ROWS - 1;
 	const shown = nodes.length > capacity ? capacity - 1 : nodes.length;
 	const lines = [theme.fg("dim", `subagents · ${active.length} 运行${pending ? ` · ${pending} 启动中` : ""} · /subagents`)];
 	for (const { view: v, prefix } of nodes.slice(0, shown)) {
@@ -145,8 +145,7 @@ export function renderRoster(views: RunView[], theme: Theme, width: number, pend
 		const text = v.progress?.previewText || (v.progress?.currentTool ? `执行工具 ${v.progress.currentTool}` : activity(v));
 		lines.push(heading + truncateToWidth(lastParagraph(text), Math.max(0, width - visibleWidth(heading))));
 	}
-	if (nodes.length > shown) lines.push(theme.fg("dim", `… 另 ${nodes.length - shown} 项 · /subagents 查看全部`));
-	lines.push(...Array(Math.max(0, LIVE_PANEL_ROWS - lines.length)).fill(""));
+	if (nodes.length > shown) lines.push(theme.fg("dim", `more ${nodes.length - shown} agents...`));
 	return lines.map(line => truncateToWidth(line, width));
 }
 
@@ -295,7 +294,7 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 					const frame = (w: number) => {
 						if (!readError) return renderRoster(currentViews, theme, w, pending);
 						const errorLines = ["subagents · 状态读取失败", ...tailPreview(readError, w).lines];
-						return [...errorLines, ...Array(Math.max(0, LIVE_PANEL_ROWS - errorLines.length)).fill("")].map(line => truncateToWidth(line, w));
+						return errorLines.slice(0, LIVE_PANEL_MAX_ROWS).map(line => truncateToWidth(line, w));
 					};
 					redraw = () => { const next = frame(width).join("\n"); if (next !== previous) { previous = next; tui.requestRender(); } };
 					return { render(w) { width = w; const lines = frame(w); previous = lines.join("\n"); return lines; }, invalidate() { previous = ""; } };

@@ -11,6 +11,7 @@ import select
 import shutil
 import sys
 import time
+import uuid
 
 import pyte
 from winpty import PtyProcess
@@ -125,6 +126,38 @@ for mode in ("regular", "fullscreen"):
             if anchor is not None:
                 assert history(current) == anchor, "Refreshing the dock must not move the selected history"
         assert "\x1b[3J" not in "".join(raw[offset:]), "Active progress must not clear native scrollback"
+        resize_offset = len(raw)
+        extra_records = []
+        for index in range(6):
+            identifier = str(uuid.uuid4())
+            directory = Path(run["dir"]).parent / identifier
+            staging = directory.with_name(f".prepare-{identifier}")
+            staging.mkdir()
+            state = dict(run, id=identifier, dir=str(directory), outputPath=str(directory / "output.md"), status="running", pid=os.getpid(), createdAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
+            contract = json.loads((Path(run["dir"]) / "contract.json").read_text(encoding="utf-8"))
+            contract["task"] = f"BURST_{index}"
+            try:
+                save(staging / "contract.json", contract)
+                save(staging / "progress.json", {"activity": "输出中", "previewText": "BURST_PREVIEW", "tools": 1, "cost": 0.01})
+                save(staging / "status.json", state)
+                staging.rename(directory)
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+            extra_records.append(state)
+            (evidence / "burst-runs.json").write_text(json.dumps(extra_records, indent=2), encoding="utf-8")
+        grown = wait_for(lambda text: "more 4 agents..." in text, "grown-to-cap")
+        assert dock_row(grown) == panel_row - 3, "Four nodes use five rows; overflowing nodes use the eight-row cap"
+        if anchor is not None:
+            assert history(grown)[0] == anchor[0], "Growing the dock must preserve the top reading anchor"
+        for state in extra_records:
+            Path(state["outputPath"]).write_text("BURST_RESULT", encoding="utf-8")
+            state.update(status="completed", updatedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
+            save(Path(state["dir"]) / "status.json", state)
+        shrunk = wait_for(lambda text: "more 4 agents..." not in text and dock_row(text) == panel_row, "shrunk-to-content")
+        if anchor is not None:
+            assert history(shrunk)[0] == anchor[0], "Shrinking the dock must preserve the top reading anchor"
+        assert "\x1b[3J" not in "".join(raw[resize_offset:]), "Node growth/shrink must not clear scrollback"
         completion_offset = len(raw)
         for record in fixture.get("otherRuns", []):
             Path(record["output"]).write_text(f"FINAL_LIVE_RESULT {record['task']}", encoding="utf-8")
@@ -135,16 +168,16 @@ for mode in ("regular", "fullscreen"):
         save(fixture["progress"], {"activity": "completed", "text": "FINAL_LIVE_RESULT", "tools": 6, "tokens": 99, "updatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()})
         run.update(status="completed", updatedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
         save(fixture["activeRun"], run)
-        ended = wait_for(lambda text: dock_row(text) is None and bool(history(text)), "completed")
+        ended = wait_for(lambda text: dock_row(text) is None and (bool(history(text)) if mode == "fullscreen" else "FINAL_LIVE_RESULT" in text), "completed")
         assert "\x1b[3J" not in "".join(raw[completion_offset:]), "Completion must append at the tail without rewriting offscreen receipts"
         entries = [json.loads(line) for line in parent_session.read_text(encoding="utf-8").splitlines()]
         cards = [entry for entry in entries if entry.get("type") == "custom" and entry.get("customType") == "subagents-completion"]
-        assert len(cards) == 1 + len(fixture.get("otherRuns", []))
+        assert len(cards) == 1 + len(fixture.get("otherRuns", [])) + len(extra_records)
         assert len({entry["data"]["view"]["run"]["id"] for entry in cards}) == len(cards)
         assert "FINAL_LIVE_RESULT" not in json.dumps([entry for entry in entries if entry.get("type") != "custom"]), "UI-only completion content must not become model messages"
+        assert max(i for i, entry in enumerate(entries) if entry.get("type") == "message") < min(i for i, entry in enumerate(entries) if entry.get("customType") == "subagents-completion"), "Results belong after existing history"
         if mode == "regular":
-            assert "FINAL_LIVE_RESULT" in ended and "HISTORY_199" in ended
-            assert ended.index("HISTORY_199") < ended.index("FINAL_LIVE_RESULT"), "Results belong after existing history"
+            assert "FINAL_LIVE_RESULT" in ended
         if mode == "fullscreen":
             old_first = history(ended)[0]
             process.write("\x1b[<64;15;10M")
@@ -165,7 +198,7 @@ for mode in ("regular", "fullscreen"):
         wait_for(lambda text: "产物" in text and "FINAL_LIVE_RESULT" in text, "completion-expanded")
         process.write("\x0f")
         wait_for(lambda text: "产物" not in text and "FINAL_LIVE_RESULT" in text, "completion-collapsed")
-        summaries.append({"mode": mode, "passed": True, "panelRow": panel_row, "activeUpdates": len(bodies), "completionEntries": len(cards), "entryExpansion": True, "wheelAnchorVerified": mode == "fullscreen", "activeAndIdleClearScrollback": False, "completionClearScrollback": False})
+        summaries.append({"mode": mode, "passed": True, "panelRow": panel_row, "activeUpdates": len(bodies), "completionEntries": len(cards), "entryExpansion": True, "growthAndShrink": True, "maxDockRows": 8, "wheelAnchorVerified": mode == "fullscreen", "activeAndIdleClearScrollback": False, "completionClearScrollback": False})
         print(json.dumps(summaries[-1]), flush=True)
         process.write("/quit\r")
         deadline = time.monotonic() + 8

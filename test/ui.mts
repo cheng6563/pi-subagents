@@ -71,7 +71,7 @@ try {
   assert.equal(typeof widget, "function");
   const roster = frame("roster", widgetComponent);
   assert.equal(placement, "belowEditor");
-  assert.equal(roster.split("\n").length, ui.LIVE_PANEL_ROWS);
+  assert.equal(roster.split("\n").length, 3, "Only the header, active parent and its child occupy rows");
   assert.match(roster, /^subagents ·/);
   assert.match(roster, /UI_ACTIVE_CASE/);
   const mountedCalls = widgetCalls;
@@ -83,7 +83,7 @@ try {
     for (const text of ["", "short", "long".repeat(1000), "中文🙂\t".repeat(300), "\x1b[31mred\x1b[0m\n".repeat(30)]) {
       const view = { ...reader(active), progress: { ...emptyProgress(), text, previewText: text } };
       const lines = ui.renderRoster([view], theme, width);
-      assert.equal(lines.length, ui.LIVE_PANEL_ROWS);
+      assert.equal(lines.length, 2, "Text updates never change one node's row count");
       assert.ok(lines.every((line: string) => tui.visibleWidth(line) <= width && !line.includes("\t")));
     }
     const preview = ui.tailPreview(Array.from({ length: 6 }, (_, i) => `ROW_${i} ${"中".repeat(200)}`).join("\n"), width);
@@ -103,11 +103,18 @@ try {
   assert.match(forestLines[3], /^│     └─ .*GRANDCHILD/);
   assert.match(forestLines[4], /^└─ .*OTHER/);
   assert.doesNotMatch(forestLines.join("\n"), /不要这一段|PRIVATE_|9999|tokens|1\.2kt/);
-  assert.equal(forestLines.length, ui.LIVE_PANEL_ROWS);
+  assert.equal(forestLines.length, 5);
   const many = Array.from({ length: 12 }, (_, i) => ({ ...reader(active), run: { ...active, id: `root-${i}` }, task: `ROOT_${i}` }));
   const overflow = ui.renderRoster(many, theme, 100).map(stripVTControlCharacters);
-  assert.equal(overflow.length, ui.LIVE_PANEL_ROWS);
-  assert.match(overflow.at(-1)!, /另 6 项/);
+  assert.equal(overflow.length, ui.LIVE_PANEL_MAX_ROWS);
+  assert.match(overflow.at(-1)!, /^more 6 agents\.\.\.$/);
+  for (const count of [1, 2, 5, 7, 8, 12, 200, 2, 1, 0]) {
+    const peers = Array.from({ length: count }, (_, i) => ({ ...reader(active), run: { ...active, id: `peer-${i}` }, task: `PEER_${i}` }));
+    const lines = ui.renderRoster(peers, theme, 100).map(stripVTControlCharacters);
+    assert.equal(lines.length, count ? Math.min(count + 1, ui.LIVE_PANEL_MAX_ROWS) : 0);
+    assert.ok(lines.every((line: string) => line.trim().length > 0), "The dock must not pad unused rows");
+    if (count > 7) assert.equal(lines.at(-1), `more ${count - 6} agents...`);
+  }
   const renderResult = ui.createRunResultRenderer();
   assert.match(frame("completed-card", renderResult({ details: { run: done, output: "# Completed\nUI_OUTPUT_OK" } }, { expanded: true }, theme)), /UI_OUTPUT_OK/);
   assert.match(frame("failed-card", renderResult({ details: { run: failed, output: "" } }, { expanded: false }, theme)), /UI_FAILURE_DETAIL/);
@@ -236,7 +243,7 @@ try {
   const release = lifecycle.beginLaunch(ctx);
   assert.equal(typeof widget, "function", "A new launch must restart the dock after idle");
   assert.match(frame("launch-pending", widgetComponent), /启动中/);
-  assert.equal(widgetComponent.render(100).length, ui.LIVE_PANEL_ROWS);
+  assert.equal(widgetComponent.render(100).length, 1, "Pending launch only needs its header");
   active.status = "running"; saveRun(active);
   release();
   assert.equal(typeof widget, "function", "Active runs must retain the widget after handoff");
