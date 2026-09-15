@@ -15,7 +15,7 @@ export type LaunchOptions = Static<typeof launchOptionsSchema>;
 
 export const parameters = Type.Object({
 	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const, { description: "Omit to launch. list/status inspect runs; result reads output. wait consumes completion without another notice; aborting wait leaves the run active and restores async notification. interrupt pauses and permits resume; cancel terminates and cannot be resumed. resume continues the saved run under a new ID. steer sends instructions; report sends a message to the parent." })),
-	task: Type.Optional(Type.String({ minLength: 1, description: "Task for a new generic child. Omit action to launch." })),
+	task: Type.Optional(Type.String({ minLength: 1, description: "Task for a new generic child. Omit action to launch. Start with a short sentence stating the action, target and goal; this opening is used as the UI summary. Put necessary background, permissions and constraints afterward instead of leading with who requested delegation or why." })),
 	// An open configuration object preserves optional fields on Responses transports
 	// that otherwise implicitly constrain closed schemas. Execution validates its exact keys/types.
 	options: Type.Optional(Type.Unsafe<LaunchOptions>({
