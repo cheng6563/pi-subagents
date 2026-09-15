@@ -5,9 +5,10 @@ import { fileURLToPath } from "node:url";
 import type { Contract, Depth } from "./contract.ts";
 import { createRun, event, isTerminal, listRuns, lockResume, readContract, readRun, saveRun, type Run } from "./store.ts";
 import { resolveHostPeerAliases } from "./runs/background/runner-aliases.ts";
+import { CompletionDelivery } from "./delivery.ts";
 
 export interface Notice { type: string; runId: string; [key: string]: unknown }
-interface Live { child: ChildProcess; done: Promise<Run>; stop: (status: "paused" | "cancelled", reason: string) => void }
+interface Live { child: ChildProcess; done: Promise<Run>; delivery: CompletionDelivery; stop: (status: "paused" | "cancelled", reason: string) => void }
 export interface WorkerLaunch { run: Run; contract: Contract; resumeFile?: string; message?: string }
 
 export function hostPackageRoot(): string {
@@ -48,7 +49,7 @@ export class RunController {
 		return { run, output: existsSync(run.outputPath) ? readFileSync(run.outputPath, "utf8") : "" };
 	}
 
-	async start(contract: Contract, options: { resumedFrom?: Run; message?: string; signal?: AbortSignal } = {}): Promise<Run> {
+	async start(contract: Contract, options: { resumedFrom?: Run; message?: string; signal?: AbortSignal; notifyOnComplete?: boolean } = {}): Promise<Run> {
 		options.signal?.throwIfAborted();
 		if (this.closing) throw new Error("Executor is shutting down");
 		const host = hostPackageRoot();
@@ -71,6 +72,8 @@ export class RunController {
 		let readyReject!: (error: Error) => void;
 		const ready = new Promise<Run>((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
 		let settled = false;
+		let readySeen = false;
+		const delivery = new CompletionDelivery(options.notifyOnComplete !== false);
 		let forced: { status: "paused" | "cancelled"; reason: string } | undefined;
 		let forceTimer: ReturnType<typeof setTimeout> | undefined;
 		let deadline: ReturnType<typeof setTimeout> | undefined;
@@ -89,7 +92,11 @@ export class RunController {
 			this.live.delete(run.id);
 			readyReject(new Error(`Subagent ${run.id} ${current.status}: ${current.error ?? "exited before ready"}. Evidence: ${run.dir}`));
 			doneResolve(current);
-			this.notify({ type: "complete", runId: run.id, status: current.status, error: current.error, outputPath: current.outputPath, dir: current.dir });
+			// Before ready, the launch call itself receives the failure; there is no async handoff.
+			if (readySeen) delivery.complete((channel) => {
+				event(current, "completion_delivery", { channel });
+				if (channel === "notice") this.notify({ type: "complete", runId: run.id, status: current.status, error: current.error, outputPath: current.outputPath, dir: current.dir });
+			});
 		};
 		const stop = (status: "paused" | "cancelled", reason: string) => {
 			if (settled || forced) return;
@@ -99,11 +106,11 @@ export class RunController {
 			forceTimer = setTimeout(() => { child.kill(); }, 7_000);
 		};
 		const onAbort = () => stop("paused", "Parent tool call interrupted");
-		this.live.set(run.id, { child, done, stop });
+		this.live.set(run.id, { child, done, delivery, stop });
 		deadline = setTimeout(() => stop("paused", `Run timed out after ${contract.timeoutMs}ms`), contract.timeoutMs);
 		child.on("message", (value) => {
 			const message = value as Notice;
-			if (message.type === "ready") readyResolve(readRun(this.root, run.id));
+			if (message.type === "ready") { readySeen = true; readyResolve(readRun(this.root, run.id)); }
 			else if (message.type === "notice") this.notify({ ...message, runId: run.id });
 		});
 		child.once("error", (error) => complete(error.message));
@@ -116,7 +123,7 @@ export class RunController {
 		return ready;
 	}
 
-	async resume(id: string, message: string | undefined, parentDepth?: Depth, signal?: AbortSignal): Promise<Run> {
+	async resume(id: string, message: string | undefined, parentDepth?: Depth, signal?: AbortSignal, notifyOnComplete = true): Promise<Run> {
 		const old = this.status(id);
 		if (!isTerminal(old.status)) throw new Error(`Run ${id} is still active`);
 		if (old.status === "cancelled") throw new Error("Cancelled runs cannot be resumed");
@@ -126,19 +133,23 @@ export class RunController {
 			const contract = readContract(old);
 			if (parentDepth && (contract.depth.maxDepth > parentDepth.maxDepth || contract.depth.depth !== parentDepth.depth + 1)) throw new Error("Resume cannot expand or reset inherited depth");
 			if (old.promptStarted && (!old.sessionFile || !existsSync(old.sessionFile))) throw new Error("Session missing after prompt started; refusing to replay the task. Inspect side effects before a new explicit run");
-			return await this.start(contract, { signal, resumedFrom: old, message: message ?? "Continue the remaining task using the saved session. Inspect prior progress and do not repeat completed side effects." });
+			return await this.start(contract, { signal, notifyOnComplete, resumedFrom: old, message: message ?? "Continue the remaining task using the saved session. Inspect prior progress and do not repeat completed side effects." });
 		} finally { release(); }
 	}
 	async wait(id: string, signal?: AbortSignal): Promise<Run> {
 		signal?.throwIfAborted();
-		const done = this.live.get(id)?.done;
-		if (!done) return this.status(id);
-		if (!signal) return done;
-		return new Promise<Run>((resolve, reject) => {
-			const onAbort = () => { signal.removeEventListener("abort", onAbort); reject(new Error("Wait interrupted; the async run is still managed. Use cancel/interrupt to stop it")); };
-			signal.addEventListener("abort", onAbort, { once: true });
-			done.then((run) => { signal.removeEventListener("abort", onAbort); resolve(run); }, reject);
-		});
+		const live = this.live.get(id);
+		if (!live) return this.status(id);
+		const release = live.delivery.claim();
+		try {
+			const result = signal ? await new Promise<Run>((resolve, reject) => {
+				const onAbort = () => { signal.removeEventListener("abort", onAbort); reject(new Error("Wait interrupted; the async run is still managed. Use cancel/interrupt to stop it")); };
+				signal.addEventListener("abort", onAbort, { once: true });
+				live.done.then((run) => { signal.removeEventListener("abort", onAbort); resolve(run); }, reject);
+			}) : await live.done;
+			release(true);
+			return result;
+		} catch (error) { release(false); throw error; }
 	}
 	async cancel(id: string, pause = false): Promise<Run> {
 		const live = this.live.get(id);

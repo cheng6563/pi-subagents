@@ -37,7 +37,18 @@ subagent({
 - `options.model` 默认继承父会话的确切 provider/model 和 thinking level。可传 `shared:lowCost`，复用 `~/.pi/agent/shared-models.json` 解析，也可显式传 `provider/model[:thinking]`。
 - shared 配置、模型或凭据不可用会失败；运行时接口错误记录为失败，不换模型。Pi 自身同模型重试由常规 Pi 设置控制。
 - `options.cwd` 默认调用者目录，`options.timeoutMs` 默认 30 分钟，超时暂停而非重新执行。
-- `async` 默认 `true`，返回 ID 后由完成通知唤醒父会话；`false` 等待同一个运行器完成。不存在能力不同的第二条前台执行链。
+- `async` 默认 `true`，返回 ID 后由完成通知唤醒父会话；`false` 等待同一个运行器完成，过程中更新运行卡片，结果仅由工具返回，不再追加完成通知。同步恢复遵循同样规则。不存在能力不同的第二条前台执行链。
+- 对仍在运行的异步任务调用 `wait`，完成结果由等待调用接收，不再追加通知；中断等待后恢复异步通知。已经发送的通知不会因后续查询而撤回。子代理主动 `report` 不受完成通知去重影响。
+
+## 可视化
+
+交互模式显示调用／结果卡片和输入区上方的实时运行面板，包含任务、模型、状态、耗时、工具执行情况；展开结果可查看输出和产物路径。面板刷新不向模型发送消息。
+
+`/subagents-fleet` 或 `/subagents` 打开详情界面，可查看当前会话的运行及后代、模型与 thinking、深度、用量、错误、实时输出和已保存的会话内容。
+
+- `↑/↓` 选择运行，`Enter/Tab` 切换概览与会话，`PgUp/PgDn` 或 `J/K` 滚动，`r` 刷新，`Esc` 关闭。
+- `p` 暂停、`D` 取消、`c` 恢复、`s` 补充任务；暂停、取消和恢复需要确认。后代记录可查看，控制须交给其所属父代理。
+- 非交互模式仍使用工具返回结果和保存的运行文件，不打开界面。
 
 ## 上下文与工具
 
@@ -79,7 +90,7 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 - 父会话退出或 reload 会暂停其子运行；进程意外退出留下的非终态记录在查询时明确标为失败。旧角色版运行不自动迁移，不假装继承其策略。
 - `subagent` 工具可用的子代理可用 `subagent({ action: "report", message: "需要父线程确认的信息" })` 非阻塞报告；叶子子代理通过正常回复交回结果。父线程可通过 steer 补充信息。
 
-状态和产物放在 Windows `%LOCALAPPDATA%/PiSubagents/<父会话ID>/<运行ID>/`，其他系统以临时目录代替 LOCALAPPDATA。子运行目录含 `contract.json`、`status.json`、`events.jsonl`、`runner.log`、`session/`、`output.md`。后代记录在父运行的 `children/` 中。工具文本超过 24,000 字符时截断，完整结果读取 `outputPath`。不自动删除恢复材料。
+状态和产物放在 Windows `%LOCALAPPDATA%/PiSubagents/<父会话ID>/<运行ID>/`，其他系统以临时目录代替 LOCALAPPDATA。子运行目录含 `contract.json`、`status.json`、`progress.json`、`events.jsonl`、`runner.log`、`session/`、`output.md`。后代记录在父运行的 `children/` 中。工具文本超过 24,000 字符时截断，完整结果读取 `outputPath`。不自动删除恢复材料。
 
 ## 配置
 
@@ -112,10 +123,22 @@ PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi npm run
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/startup-cancel.mts
 ```
 
-单元测试覆盖要求快照、模型解析、深度与运行提示。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、工具可用性、派生、Bash/脚本执行、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。
+单元测试覆盖要求快照、模型解析、深度、运行提示、完成交付归属和实时进度。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、工具可用性、派生、Bash/脚本执行、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。
 
-在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、中文 MD 与低成本选择、两层派生及禁止增加深度、暂停后恢复原要求快照；测试要求请求中不发送 `strict`，会产生实际模型请求：
+在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、中文 MD 与低成本选择、两层派生及禁止增加深度、暂停后恢复原要求快照；测试同时断言同步结果没有完成通知、请求中不发送 `strict`，会产生实际模型请求：
 
 ```bash
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/tool-call-smoke.mts
+```
+
+界面测试使用真实宿主组件，验证渲染、选择、滚动、控制按钮和生命周期；不发送模型请求：
+
+```bash
+PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/ui.mts
+```
+
+该测试输出 `fixture.json` 路径。Windows 安装 `pywinpty`、`pyte` 后，可用以下命令在独立 ConPTY 中启动实际 Pi，验证面板刷新、详情、会话切换和关闭。使用的是界面测试记录，不会执行真实子任务；退出时清理本次创建的 Pi 进程。
+
+```bash
+python3 test/ui-pty.py <fixture.json绝对路径>
 ```

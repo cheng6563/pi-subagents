@@ -7,6 +7,7 @@ import { createJiti } from "jiti";
 import { resolveHostPeerAliases } from "../src/runs/background/runner-aliases.ts";
 import { storeRoot, readContract } from "../src/store.ts";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 
 const host = process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT;
 assert.ok(host, "Set PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT to the installed Pi npm package");
@@ -35,6 +36,7 @@ const server = createServer(async (req, res) => {
     const toolMessages = body.messages.filter((m: any) => m.role === "tool");
     const latestTool = toolMessages.at(-1);
     const hasTool = toolMessages.length > 0;
+    if (caseName === "CASE_ASYNC_FAIL") { res.writeHead(503); res.end(JSON.stringify({ error: { message: "intentional async failure" } })); return; }
     if (caseName === "CASE_HOLD") { res.writeHead(200, { "Content-Type": "text/event-stream" }); res.write(": waiting\n\n"); return; }
     if (caseName === "CASE_FAIL" && hasTool && !failedOnce) { failedOnce = true; res.writeHead(503); res.end(JSON.stringify({ error: { message: "intentional integration failure" } })); return; }
     let tool: { name: string; arguments: object } | undefined;
@@ -47,6 +49,7 @@ const server = createServer(async (req, res) => {
         for (const name of ["bash", "read", "write", "probe"]) assert.ok(names.includes(name), `${name} must remain available`);
       }
       if (["CASE_NEST", "CASE_INCREASE"].includes(caseName)) assert.ok(body.tools.some((t: any) => t.function.name === "subagent"));
+      if (caseName === "CASE_REPORT") tool = { name: "subagent", arguments: { action: "report", message: "REPORT_MARKER" } };
       if (caseName === "CASE_INCREASE") tool = { name: "subagent", arguments: { task: "CASE_TOO_DEEP", options: { maxDepth: 999 }, async: false } };
       if (caseName === "CASE_NEST") tool = { name: "subagent", arguments: { task: "CASE_LEAF", async: false } };
       if (caseName === "CASE_CLI") tool = { name: "bash", arguments: { command: "pi() { printf 'PI_STUB_OK'; }; codex() { printf 'CODEX_STUB_OK'; }; pi; codex" } };
@@ -87,17 +90,26 @@ const notices: any[] = [];
 const sessionId = randomUUID();
 const pi = {
   registerTool: (t: any) => tools.set(t.name, t),
+  registerCommand() {}, registerMessageRenderer() {},
   on: (name: string, cb: any) => { handlers.set(name, [...(handlers.get(name) ?? []), cb]); },
   getThinkingLevel: () => "off",
   sendMessage: (message: any) => notices.push(message),
 };
 registerExecutor(pi);
 const ctx = { cwd, model: { provider: "fixture", id: "parent" }, modelRegistry: { getAvailable: () => [{ provider: "fixture", id: "parent" }, { provider: "fixture", id: "cheap" }] }, sessionManager: { getSessionId: () => sessionId, getEntries: () => [], getLeafId: () => null } };
-async function call(params: any) { const r = await tools.get("subagent").execute(randomUUID(), params, undefined, undefined, ctx); return r.details; }
+const progressUpdates: any[] = [];
+async function call(params: any) { const r = await tools.get("subagent").execute(randomUUID(), params, undefined, (update: any) => progressUpdates.push(update), ctx); return r.details; }
 const results: any[] = [];
 async function scenario(name: string, params: object, expected = "completed") {
   const result = await call({ task: name, async: false, ...(Object.keys(params).length ? { options: params } : {}) });
   assert.equal(result.run.status, expected, JSON.stringify(result));
+  assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === result.run.id).length, 0, "Synchronous launch must not enqueue completion notices");
+  assert.ok(progressUpdates.some(u => u.details.run.id === result.run.id), "Synchronous execution must publish display updates");
+  if (name === "CASE_DEFAULT") {
+    const progress = JSON.parse(readFileSync(join(result.run.dir, "progress.json"), "utf8"));
+    assert.equal(progress.activity, "completed");
+    assert.ok(progress.tools >= 1 && progress.tokens > 0, "Real worker progress must include tools and usage");
+  }
   results.push({ name, runId: result.run.id, status: result.run.status, output: result.output });
   console.log(JSON.stringify(results.at(-1)));
   return result;
@@ -126,6 +138,7 @@ try {
     await assert.rejects(() => pending, /Wait interrupted/);
     assert.equal((await call({ action: "status", id: held.id })).status, "running");
     assert.equal((await call({ action: "cancel", id: held.id })).status, "cancelled");
+    assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === held.id).length, 1, "Interrupted wait restores async notification");
     results.push({ name: "wait_interrupt_keeps_run_managed", status: "passed" });
   } else if (process.env.SUBAGENT_INTEGRATION_CASE === "fork") {
     const history = [
@@ -166,6 +179,7 @@ try {
   await assert.rejects(() => call({ action: "resume", id: failed.run.id, options: { model: "fixture/parent" } }), /options cannot override/);
   const resumed = await call({ action: "resume", id: failed.run.id, async: false });
   assert.equal(resumed.run.status, "completed", JSON.stringify(resumed));
+  assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === resumed.run.id).length, 0, "Synchronous resume must not enqueue completion notices");
   assert.equal(readFileSync(marker, "utf8"), before, "resume must not repeat probe side effects");
   const saved = readContract(resumed.run);
   assert.equal(saved.model.id, "cheap");
@@ -182,6 +196,18 @@ try {
   assert.equal((await call({ action: "interrupt", id: paused.id })).status, "paused");
   assert.ok(notices.some((n) => n.details.type === "complete"));
   results.push({ name: "cancel_interrupt_notifications", status: "passed" });
+  for (const [task, status] of [["CASE_MD", "completed"], ["CASE_ASYNC_FAIL", "failed"]]) {
+    const background = await call({ task });
+    const deadline = Date.now() + 30000;
+    while ((await call({ action: "status", id: background.id })).status === "running" && Date.now() < deadline) await delay(25);
+    // Worker writes terminal state before exit; wait for the completion delivery event itself.
+    while (!notices.some(n => n.details.type === "complete" && n.details.runId === background.id) && Date.now() < deadline) await delay(25);
+    assert.equal((await call({ action: "status", id: background.id })).status, status);
+    assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === background.id).length, 1);
+  }
+  const reported = await scenario("CASE_REPORT", { maxDepth: 2 });
+  assert.ok(notices.some(n => n.details.runId === reported.run.id && n.details.message === "REPORT_MARKER"), "Explicit report survives synchronous completion suppression");
+  results.push({ name: "async_success_failure_once_and_sync_report", status: "passed" });
   const historyEntry = { type: "message", id: "c1", parentId: null, timestamp: new Date().toISOString(), message: { role: "user", content: "INHERITED_HISTORY_MARKER", timestamp: Date.now() } };
   ctx.sessionManager.getEntries = () => [historyEntry] as any;
   ctx.sessionManager.getLeafId = () => "c1" as any;
@@ -203,6 +229,7 @@ try {
   const timedOut = await call({ action: "wait", id: timeout.id });
   assert.equal(timedOut.run.status, "paused");
   assert.match(timedOut.run.error, /timed out/);
+  assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === timeout.id).length, 0, "Active wait owns completion");
   results.push({ name: "timeout_pause", status: "passed", runId: timeout.id });
   const interruptedCall = new AbortController();
   const duringStartup = tools.get("subagent").execute(randomUUID(), { task: "CASE_DEFAULT" }, interruptedCall.signal, undefined, ctx);

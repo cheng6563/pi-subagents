@@ -7,6 +7,8 @@ import { childDepth, readRequirements, selectModel, forkMessages, type Depth, ty
 import { RunController, type Notice } from "./controller.ts";
 import { storeRoot } from "./store.ts";
 import { getAgentDir } from "./shared/utils.ts";
+import { readProgress } from "./progress.ts";
+import { createRunResultRenderer, registerRunUI, renderRunCall } from "./ui.ts";
 
 interface Defaults { asyncByDefault: boolean; timeoutMs: number }
 export function loadDefaults(): Defaults {
@@ -50,16 +52,33 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 		}
 		return controller;
 	}
+	const ui = binding ? undefined : registerRunUI(pi, getController);
 	pi.registerTool({
 		name: "subagent", label: "Subagent",
 		description: "Run one generic Pi child with task and optional options {requirementsFile, model, maxDepth, context, cwd, timeoutMs}; no named roles or inferred review/acceptance policy. Parent model and fresh context are defaults. options.maxDepth defaults to 1 and descendants cannot enlarge it. At the depth ceiling, the child has no subagent tool. Other tools/extensions load normally. Async completion notifies the parent. Use exact run IDs for status, result, wait, cancel, interrupt, resume and steer; resume preserves loaded requirements/model/depth and returns a new ID. Inspect failed-run evidence before resuming; no automatic replay or model fallback. Output text is truncated at 24,000 characters; full result is at outputPath. A child can report to its parent with action:report.",
 		parameters,
-		async execute(_callId, input: Params, signal, _onUpdate, ctx) {
+		async execute(_callId, input: Params, signal, onUpdate, ctx) {
 			const params = validateParams(input);
 			const options = params.options ?? {};
 			if (signal?.aborted) throw new Error("Subagent call was cancelled before launch");
 			const defaults = loadDefaults();
+			const asynchronous = params.async ?? defaults.asyncByDefault;
 			const c = getController(ctx);
+			ui?.attach(ctx);
+			const waitFor = async (id: string, waitSignal?: AbortSignal) => {
+				let last = "";
+				const update = () => {
+					try {
+						const run = c.status(id);
+						const progress = readProgress(run);
+						const key = `${run.status}:${progress?.updatedAt}:${Math.floor(Date.now() / 1000)}`;
+						if (key !== last) { last = key; onUpdate?.({ content: [{ type: "text", text: `子代理 ${id} · ${progress?.activity ?? run.status}` }], details: { run, progress } }); }
+					} catch (error) { console.error(JSON.stringify({ event: "subagent_progress_read_failed", runId: id, error: String(error) })); }
+				};
+				const timer = onUpdate ? setInterval(update, 250) : undefined;
+				try { if (onUpdate) update(); await c.wait(id, waitSignal); return response(c.result(id)); }
+				finally { if (timer) clearInterval(timer); }
+			};
 			if (params.action) {
 				for (const key of ["task", "options"] as const) if (params[key] !== undefined) throw new Error(`${key} cannot override a management/resume operation`);
 				if (params.action === "report") {
@@ -71,13 +90,13 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 				switch (params.action) {
 					case "status": return response(c.status(params.id));
 					case "result": return response(c.result(params.id));
-					case "wait": await c.wait(params.id, signal); return response(c.result(params.id));
+					case "wait": return waitFor(params.id, signal);
 					case "cancel": return response(await c.cancel(params.id));
 					case "interrupt": return response(await c.cancel(params.id, true));
 					case "steer": if (!params.message?.trim()) throw new Error("message is required"); c.steer(params.id, params.message); return response({ queued: true, id: params.id });
 					case "resume": {
-						const run = await c.resume(params.id, params.message, depth, signal);
-						if ((params.async ?? defaults.asyncByDefault) === false) { await c.wait(run.id); return response(c.result(run.id)); }
+						const run = await c.resume(params.id, params.message, depth, signal, asynchronous);
+						if (!asynchronous) return waitFor(run.id);
 						return response(run);
 					}
 				}
@@ -94,14 +113,14 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 				...(requirements ? { requirements } : {}),
 				...(context === "fork" ? { contextMessages: forkMessages(buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId()).messages) } : {}),
 			};
-			const run = await c.start(contract, { signal });
-			if ((params.async ?? defaults.asyncByDefault) === false) {
-				await c.wait(run.id); return response(c.result(run.id));
-			}
+			const run = await c.start(contract, { signal, notifyOnComplete: asynchronous });
+			if (!asynchronous) return waitFor(run.id);
 			return response(run);
 		},
+		renderCall: renderRunCall,
+		renderResult: createRunResultRenderer(),
 	});
-	pi.on("session_shutdown", async () => { await controller?.shutdown(); controller = undefined; currentSessionId = undefined; });
+	pi.on("session_shutdown", async () => { ui?.dispose(); await controller?.shutdown(); controller = undefined; currentSessionId = undefined; });
 }
 
 export default function subagent(pi: ExtensionAPI): void {

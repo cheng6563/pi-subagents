@@ -21,7 +21,7 @@ const available = await runtime.getAvailable();
 const handlers: any[] = [];
 let tool: any;
 const notices: any[] = [];
-registerExecutor({ registerTool: (t: any) => { tool = t; }, getThinkingLevel: () => process.env.PI_REASONING_LEVEL || "off", on: (name: string, cb: any) => { if (name === "session_shutdown") handlers.push(cb); }, sendMessage: (message: any) => notices.push(message) });
+registerExecutor({ registerCommand() {}, registerMessageRenderer() {}, registerTool: (t: any) => { tool = t; }, getThinkingLevel: () => process.env.PI_REASONING_LEVEL || "off", on: (name: string, cb: any) => { if (name === "session_shutdown") handlers.push(cb); }, sendMessage: (message: any) => notices.push(message) });
 const ctx = { cwd: root, model: { provider: process.env.PI_PROVIDER, id: process.env.PI_MODEL }, modelRegistry: { getAvailable: () => available }, sessionManager: { getSessionId: () => randomSession } };
 const randomSession = randomUUID();
 const md = join(root, "要求.md");

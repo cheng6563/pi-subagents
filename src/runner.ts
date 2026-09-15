@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { requirementsPrompt, validateContract } from "./contract.ts";
 import { event, saveRun, type RunStatus } from "./store.ts";
 import { registerExecutor } from "./extension.ts";
+import { progressWriter } from "./progress.ts";
 import type { RunController, WorkerLaunch } from "./controller.ts";
 import { createDefaultChildSessionFactory, projectChildSessionEventForJson, type ChildSession } from "./runs/shared/child-session.ts";
 
@@ -11,6 +12,7 @@ function send(value: unknown): void { if (process.connected) process.send?.(valu
 export async function runWorker(input: WorkerLaunch, pendingControls: unknown[] = []): Promise<void> {
 	const { run } = input;
 	const contract = validateContract(input.contract);
+	const progress = progressWriter(run);
 	let session: ChildSession | undefined;
 	let children: RunController | undefined;
 	let stopped: { status: "paused" | "cancelled"; reason: string } | undefined;
@@ -59,6 +61,7 @@ export async function runWorker(input: WorkerLaunch, pendingControls: unknown[] 
 		saveRun(run);
 		event(run, "session_ready", { sessionFile: run.sessionFile, model: session.modelId, depth: contract.depth });
 		session.subscribe((e) => {
+			progress.update(e);
 			event(run, "session_event", projectChildSessionEventForJson(e));
 			if (session?.sessionFile && run.sessionFile !== session.sessionFile) { run.sessionFile = session.sessionFile; saveRun(run); }
 		});
@@ -92,6 +95,7 @@ export async function runWorker(input: WorkerLaunch, pendingControls: unknown[] 
 		}
 		await children?.shutdown();
 		run.status = finalStatus; run.error = finalError; saveRun(run);
+		progress.finish(finalStatus);
 		event(run, "terminal", { status: finalStatus, error: finalError, outputPath: run.outputPath });
 		process.off("message", onMessage); process.off("disconnect", onDisconnect);
 		process.off("SIGTERM", onSignal); process.off("SIGINT", onSignal);

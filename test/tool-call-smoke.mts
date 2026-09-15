@@ -46,13 +46,14 @@ for (const spec of cases.filter(spec => selectedNames.size === 0 || selectedName
   const calls: any[] = [];
   const results: any[] = [];
   const schemas: any[] = [];
+  const notifications: any[] = [];
   const maxCalls = spec.name === "interrupt-resume" ? 3 : 1;
   const settingsManager = sdk.SettingsManager.inMemory({ retry: { enabled: false }, compaction: { enabled: false } });
   const loader = new sdk.DefaultResourceLoader({
     cwd: directory, agentDir: sdk.getAgentDir(), settingsManager,
     noExtensions: true, noSkills: true, noContextFiles: true, noPromptTemplates: true, noThemes: true,
     extensionFactories: [{ name: "actual-subagent-tool-test", factory(pi: any) {
-      registerExecutor(pi);
+      registerExecutor({ ...pi, sendMessage(message: any, options: any) { notifications.push(message); return pi.sendMessage(message, options); } });
       pi.on("before_provider_request", (event: any) => {
         schemas.push(event.payload.tools?.filter((tool: any) => tool.name === "subagent"));
       });
@@ -120,6 +121,7 @@ for (const spec of cases.filter(spec => selectedNames.size === 0 || selectedName
       assert.equal(schema[0].parameters.properties.options.additionalProperties, true);
     }
     assert.equal(result.run.status, "completed", JSON.stringify(result));
+    assert.equal(notifications.filter(n => n.details?.type === "complete" && n.details.runId === result.run.id).length, 0, "Synchronous results must not also be delivered as subagent notices");
     assert.match(result.output, new RegExp(spec.marker));
     const contract = readJson(join(result.run.dir, "contract.json"));
     if (spec.name === "markdown-lowCost") {
@@ -145,7 +147,7 @@ for (const spec of cases.filter(spec => selectedNames.size === 0 || selectedName
     clearTimeout(timer);
     await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
     session.dispose();
-    writeFileSync(join(directory, "evidence.json"), JSON.stringify({ calls, results, schemas }, null, 2), "utf8");
+    writeFileSync(join(directory, "evidence.json"), JSON.stringify({ calls, results, schemas, notifications }, null, 2), "utf8");
   }
 }
 writeFileSync(join(root, "results.json"), JSON.stringify(summaries, null, 2), "utf8");
