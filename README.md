@@ -22,23 +22,26 @@
 subagent({ task: "读取指定目录并回答问题，不修改文件。" })
 subagent({
   task: "核对本次修改。",
-  requirementsFile: "./requirements/check.md",
-  model: "shared:lowCost",
-  context: "fresh"
+  options: {
+    requirementsFile: "./requirements/check.md",
+    model: "shared:lowCost",
+    context: "fresh"
+  }
 })
 ```
 
 - 不传 `action` 为新运行，`task` 必填。没有 `agent`、内置角色、自定义角色目录、工作流脚本、自动审核或验收参数。
-- `requirementsFile` 是 UTF-8 `.md` 文件，相对路径基于**调用者 cwd**，不受子代理 `cwd` 参数影响。启动前检查并读取，读取失败、非法 UTF-8 或非普通文件明确报错，不启动子代理。
+- 启动设置放在 `options` 对象中：`requirementsFile`、`model`、`maxDepth`、`context`、`cwd`、`timeoutMs`。省略 `options` 即使用默认值；运行时拒绝未知字段和错误类型。`async` 保持为顶层参数，启动和恢复均可使用。
+- `options.requirementsFile` 是 UTF-8 `.md` 文件，相对路径基于**调用者 cwd**，不受子代理 `options.cwd` 参数影响。启动前检查并读取，读取失败、非法 UTF-8 或非普通文件明确报错，不启动子代理。
 - 实际内容、来源路径和 SHA-256 保存在本次 `contract.json`。恢复直接使用这一快照，不再读取原 MD；删除或修改源文件不影响恢复。
-- `model` 默认继承父会话的确切 provider/model 和 thinking level。可传 `shared:lowCost`，复用 `~/.pi/agent/shared-models.json` 解析，也可显式传 `provider/model[:thinking]`。
+- `options.model` 默认继承父会话的确切 provider/model 和 thinking level。可传 `shared:lowCost`，复用 `~/.pi/agent/shared-models.json` 解析，也可显式传 `provider/model[:thinking]`。
 - shared 配置、模型或凭据不可用会失败；运行时接口错误记录为失败，不换模型。Pi 自身同模型重试由常规 Pi 设置控制。
-- `cwd` 默认调用者目录，`timeoutMs` 默认 30 分钟，超时暂停而非重新执行。
+- `options.cwd` 默认调用者目录，`options.timeoutMs` 默认 30 分钟，超时暂停而非重新执行。
 - `async` 默认 `true`，返回 ID 后由完成通知唤醒父会话；`false` 等待同一个运行器完成。不存在能力不同的第二条前台执行链。
 
 ## 上下文与工具
 
-`context: "fresh"` 是默认值：不复制父会话历史或父系统提示词。`context: "fork"` 显式复制父会话当前分支的对话上下文，包含压缩摘要，但不复制父系统提示词。选择 fork 就意味着原对话中的要求也可能影响子代理。
+`options.context: "fresh"` 是默认值：不复制父会话历史或父系统提示词。`options.context: "fork"` 显式复制父会话当前分支的对话上下文，包含压缩摘要，但不复制父系统提示词。选择 fork 就意味着原对话中的要求也可能影响子代理。
 
 子代理正常加载当前环境的工具、已配置扩展、skills 和 AGENTS.md；本扩展不扫描角色目录，不自动加载业务方法要求，也不附加独立审核标准。恢复保留原对话和任务快照，但环境扩展、AGENTS.md 等仍从当前环境加载。全局规则不是此扩展的重写对象；更严格的禁止派生指令仍需遵守。
 
@@ -47,12 +50,12 @@ subagent({
 ## 派生边界
 
 ```javascript
-subagent({ task: "按任务要求分层检索。", maxDepth: 2 })
+subagent({ task: "按任务要求分层检索。", options: { maxDepth: 2 } })
 ```
 
-根父会话为深度 0，默认 `maxDepth: 1` 只允许启动一层。显式 `maxDepth: 2` 时第一层可再启动一层。后代默认继承原绝对上限，剩余深度为 `maxDepth - depth`，只能降低、不能增加或重置。恢复沿用原深度，不重新计为第一层。
+根父会话为深度 0，`options.maxDepth` 默认为 1，只允许启动一层。显式设置为 2 时第一层可再启动一层。后代默认继承原绝对上限，剩余深度为 `maxDepth - depth`，只能降低、不能增加或重置。恢复沿用原深度，不重新计为第一层。
 
-深度授权绑定在运行器闭包，后代不能通过参数增大执行器额度。额度耗尽时，不注册或提供 `subagent` 工具；尚有额度时提供该工具，后续调用仍受继承上限约束。
+深度上限绑定在运行器闭包，后代不能通过参数增大上限。达到最大深度时，不注册或提供 `subagent` 工具；未达到时提供该工具，后续调用仍受继承上限约束。
 
 限制仅作用于 `subagent` 工具。Bash、脚本、远端命令及其他工具和扩展照常使用，本扩展不检查或拦截其中的 Pi、Codex 等命令。
 
@@ -71,7 +74,7 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 
 - 状态为 queued、running、completed、failed、paused、cancelled。completed 仅表示运行协议正常结束，不代表业务验收通过。
 - `interrupt` 可恢复；`cancel` 终止且不可恢复。只向本实例确实拥有的子进程发送控制，不按模糊 PID/端口清理。中断 `wait` 只停止等待，异步运行仍可管理；要停运行需明确 cancel/interrupt。
-- `resume` 返回新 ID，复制原会话至新目录，保留原模型、要求、深度、cwd 和上下文；管理操作不接受覆盖这些启动参数。已恢复的旧 ID 指向后继，拒绝重复恢复。
+- `resume` 返回新 ID，复制原会话至新目录，保留原模型、要求、深度、cwd 和上下文；管理操作不接受 `task` 或 `options`，不能覆盖这些启动参数。已恢复的旧 ID 指向后继，拒绝重复恢复。
 - 启动前失败且尚未提交 prompt 时可重试原任务；prompt 已开始而会话文件丢失时拒绝自动重放。失败后先查看状态、日志、产物与已发生的副作用，再恢复。
 - 父会话退出或 reload 会暂停其子运行；进程意外退出留下的非终态记录在查询时明确标为失败。旧角色版运行不自动迁移，不假装继承其策略。
 - `subagent` 工具可用的子代理可用 `subagent({ action: "report", message: "需要父线程确认的信息" })` 非阻塞报告；叶子子代理通过正常回复交回结果。父线程可通过 steer 补充信息。
@@ -97,7 +100,7 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 }
 ```
 
-使用 OpenAI Responses 时，若端点支持 `strict` 字段，在对应模型的 `models.json` 配置中设置 `"compat": { "supportsStrictMode": true }`。这让 Pi 对普通工具显式发送 `strict: false`，保留可选参数语义，并非要求工具采用严格模式。部分 Responses 端点在省略 `strict` 时会把可选字段全部变成必填，导致无法省略启动时的 `action`。
+`options` 在工具协议中采用开放的配置对象，由执行器校验其实际字段和类型。普通可选参数无需依赖模型的 strict 兼容配置。
 
 ## 开发验证
 
@@ -111,7 +114,7 @@ PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --
 
 单元测试覆盖要求快照、模型解析、深度与运行提示。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、工具可用性、派生、Bash/脚本执行、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。
 
-在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、两层派生和禁止增加深度；会产生实际模型请求：
+在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、中文 MD 与低成本选择、两层派生及禁止增加深度、暂停后恢复原要求快照；测试要求请求中不发送 `strict`，会产生实际模型请求：
 
 ```bash
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/tool-call-smoke.mts

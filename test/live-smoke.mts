@@ -30,9 +30,9 @@ const results: any[] = [];
 try {
   for (const [name, params] of [
     ["parent-default", { task: "这是通用子代理启动冒烟测试。不要调用任何工具，只回复 LIVE_PARENT_OK。" }],
-    ["shared-lowCost-markdown", { task: "这是要求文件加载冒烟测试。按照附加要求的固定文本回复，不调用工具。", requirementsFile: md, model: "shared:lowCost" }],
+    ["shared-lowCost-markdown", { task: "这是要求文件加载冒烟测试。按照附加要求的固定文本回复，不调用工具。", options: { requirementsFile: md, model: "shared:lowCost" } }],
   ] as const) {
-    const response = await tool.execute(randomUUID(), { ...params, async: false, timeoutMs: 90000 }, undefined, undefined, ctx);
+    const response = await tool.execute(randomUUID(), { ...params, async: false, options: { ...("options" in params ? params.options : {}), timeoutMs: 90000 } }, undefined, undefined, ctx);
     const value = response.details;
     results.push({ name, ...value, model: readContract(value.run).model });
     console.log(JSON.stringify({ name, runId: value.run.id, status: value.run.status, model: results.at(-1).model, output: value.output, error: value.run.error }));

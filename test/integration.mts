@@ -47,7 +47,7 @@ const server = createServer(async (req, res) => {
         for (const name of ["bash", "read", "write", "probe"]) assert.ok(names.includes(name), `${name} must remain available`);
       }
       if (["CASE_NEST", "CASE_INCREASE"].includes(caseName)) assert.ok(body.tools.some((t: any) => t.function.name === "subagent"));
-      if (caseName === "CASE_INCREASE") tool = { name: "subagent", arguments: { task: "CASE_TOO_DEEP", maxDepth: 999, async: false } };
+      if (caseName === "CASE_INCREASE") tool = { name: "subagent", arguments: { task: "CASE_TOO_DEEP", options: { maxDepth: 999 }, async: false } };
       if (caseName === "CASE_NEST") tool = { name: "subagent", arguments: { task: "CASE_LEAF", async: false } };
       if (caseName === "CASE_CLI") tool = { name: "bash", arguments: { command: "pi() { printf 'PI_STUB_OK'; }; codex() { printf 'CODEX_STUB_OK'; }; pi; codex" } };
       if (caseName === "CASE_SCRIPT") tool = { name: "bash", arguments: { command: "bash launch.sh" } };
@@ -96,7 +96,7 @@ const ctx = { cwd, model: { provider: "fixture", id: "parent" }, modelRegistry: 
 async function call(params: any) { const r = await tools.get("subagent").execute(randomUUID(), params, undefined, undefined, ctx); return r.details; }
 const results: any[] = [];
 async function scenario(name: string, params: object, expected = "completed") {
-  const result = await call({ task: name, async: false, ...params });
+  const result = await call({ task: name, async: false, ...(Object.keys(params).length ? { options: params } : {}) });
   assert.equal(result.run.status, expected, JSON.stringify(result));
   results.push({ name, runId: result.run.id, status: result.run.status, output: result.output });
   console.log(JSON.stringify(results.at(-1)));
@@ -138,9 +138,11 @@ try {
     assert.match(JSON.stringify(captures.at(-1)), /INHERITED_HISTORY_MARKER/);
     assert.doesNotMatch(JSON.stringify(captures.at(-1)), /pending-parent-call/);
   } else {
-  await assert.rejects(() => call({ task: "CASE_DEFAULT", requirementsFile: "missing.md" }), /Cannot load requirementsFile/);
-  await assert.rejects(() => call({ task: "CASE_DEFAULT", model: "shared:absent" }), /Unknown shared model/);
-  await assert.rejects(() => call({ task: "CASE_DEFAULT", model: "fixture/missing" }), /unavailable/);
+  await assert.rejects(() => call({ task: "CASE_DEFAULT", options: { requirementsFile: "missing.md" } }), /Cannot load requirementsFile/);
+  await assert.rejects(() => call({ task: "CASE_DEFAULT", options: { model: "shared:absent" } }), /Unknown shared model/);
+  await assert.rejects(() => call({ task: "CASE_DEFAULT", options: { model: "fixture/missing" } }), /unavailable/);
+  await assert.rejects(() => call({ task: "CASE_DEFAULT", options: { maxDepth: 0 } }), /Invalid/);
+  await assert.rejects(() => call({ task: "CASE_DEFAULT", options: { unexpected: true } }), /Invalid options/);
   assert.deepEqual(await call({ action: "list" }), []);
   await scenario("CASE_DEFAULT", {});
   assert.equal(captures[0].model, "parent");
@@ -161,6 +163,7 @@ try {
   const before = readFileSync(marker, "utf8");
   writeFileSync(md, "CHANGED_REQUIREMENTS", "utf8");
   writeFileSync(join(agentDir, "shared-models.json"), JSON.stringify({ lowCost: { provider: "fixture", model: "parent" } }), "utf8");
+  await assert.rejects(() => call({ action: "resume", id: failed.run.id, options: { model: "fixture/parent" } }), /options cannot override/);
   const resumed = await call({ action: "resume", id: failed.run.id, async: false });
   assert.equal(resumed.run.status, "completed", JSON.stringify(resumed));
   assert.equal(readFileSync(marker, "utf8"), before, "resume must not repeat probe side effects");
@@ -171,11 +174,11 @@ try {
   assert.doesNotMatch(JSON.stringify(captures.at(-1)), /CHANGED_REQUIREMENTS/);
   await assert.rejects(() => call({ action: "resume", id: failed.run.id }), /already resumed/);
   results.push({ name: "failure_resume_snapshot_no_replay", runId: resumed.run.id, status: resumed.run.status });
-  const held = await call({ task: "CASE_HOLD", timeoutMs: 60000 });
+  const held = await call({ task: "CASE_HOLD", options: { timeoutMs: 60000 } });
   const cancelled = await call({ action: "cancel", id: held.id });
   assert.equal(cancelled.status, "cancelled");
   await assert.rejects(() => call({ action: "resume", id: held.id }), /cannot be resumed/);
-  const paused = await call({ task: "CASE_HOLD", timeoutMs: 60000 });
+  const paused = await call({ task: "CASE_HOLD", options: { timeoutMs: 60000 } });
   assert.equal((await call({ action: "interrupt", id: paused.id })).status, "paused");
   assert.ok(notices.some((n) => n.details.type === "complete"));
   results.push({ name: "cancel_interrupt_notifications", status: "passed" });
@@ -196,7 +199,7 @@ try {
   const startupResumed = await call({ action: "resume", id: startupFailed.id, async: false });
   assert.equal(startupResumed.run.status, "completed", JSON.stringify(startupResumed));
   results.push({ name: "startup_failure_resume", status: "passed", runId: startupResumed.run.id });
-  const timeout = await call({ task: "CASE_HOLD", timeoutMs: 6000 });
+  const timeout = await call({ task: "CASE_HOLD", options: { timeoutMs: 6000 } });
   const timedOut = await call({ action: "wait", id: timeout.id });
   assert.equal(timedOut.run.status, "paused");
   assert.match(timedOut.run.error, /timed out/);

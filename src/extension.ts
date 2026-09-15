@@ -1,32 +1,13 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { Type } from "typebox";
-import { StringEnum } from "@earendil-works/pi-ai";
+import { parameters, validateParams, type Params } from "./parameters.ts";
+export { parameters } from "./parameters.ts";
 import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { childDepth, readRequirements, selectModel, forkMessages, type Depth, type Contract } from "./contract.ts";
 import { RunController, type Notice } from "./controller.ts";
 import { storeRoot } from "./store.ts";
 import { getAgentDir } from "./shared/utils.ts";
 
-export const parameters = Type.Object({
-	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const)),
-	task: Type.Optional(Type.String({ minLength: 1, description: "Task for the generic executor. Omit action when starting a new run." })),
-	requirementsFile: Type.Optional(Type.String({ minLength: 1, description: "UTF-8 .md file, resolved relative to the caller cwd and read before launch. Resume uses the saved contents." })),
-	model: Type.Optional(Type.String({ minLength: 1, description: "Default: exact parent model. Use shared:lowCost or provider/model[:thinking]. Missing/unavailable models fail without fallback." })),
-	maxDepth: Type.Optional(Type.Integer({ minimum: 1, description: "Absolute tree depth ceiling. Root default 1; children inherit the ceiling and may only reduce it." })),
-	context: Type.Optional(StringEnum(["fresh", "fork"] as const, { description: "Default fresh: no parent history/system prompt. fork explicitly copies parent conversation, never the parent system prompt. Normal environment resources still load." })),
-	cwd: Type.Optional(Type.String({ minLength: 1 })),
-	async: Type.Optional(Type.Boolean({ description: "Default true. Completion notifies this parent; false waits in this call." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1 })),
-	id: Type.Optional(Type.String({ description: "Exact run UUID for status/control/recovery." })),
-	message: Type.Optional(Type.String({ minLength: 1, description: "Resume/steer message or a child report to its parent." })),
-}, { additionalProperties: false });
-
-interface Params {
-	action?: "status" | "list" | "result" | "wait" | "cancel" | "interrupt" | "resume" | "steer" | "report";
-	task?: string; requirementsFile?: string; model?: string; maxDepth?: number; context?: "fresh" | "fork";
-	cwd?: string; async?: boolean; timeoutMs?: number; id?: string; message?: string;
-}
 interface Defaults { asyncByDefault: boolean; timeoutMs: number }
 export function loadDefaults(): Defaults {
 	const file = join(getAgentDir(), "extensions", "subagent", "config.json");
@@ -71,14 +52,16 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 	}
 	pi.registerTool({
 		name: "subagent", label: "Subagent",
-		description: "Run one generic Pi child with task and optional requirementsFile; no named roles or inferred review/acceptance policy. Parent model and fresh context are defaults. maxDepth defaults to 1 and descendants cannot enlarge it. At the depth ceiling, the child has no subagent tool. Other tools/extensions load normally. Async completion notifies the parent. Use exact run IDs for status, result, wait, cancel, interrupt, resume and steer; resume preserves loaded requirements/model/depth and returns a new ID. Inspect failed-run evidence before resuming; no automatic replay or model fallback. Output text is truncated at 24,000 characters; full result is at outputPath. A child can report to its parent with action:report.",
+		description: "Run one generic Pi child with task and optional options {requirementsFile, model, maxDepth, context, cwd, timeoutMs}; no named roles or inferred review/acceptance policy. Parent model and fresh context are defaults. options.maxDepth defaults to 1 and descendants cannot enlarge it. At the depth ceiling, the child has no subagent tool. Other tools/extensions load normally. Async completion notifies the parent. Use exact run IDs for status, result, wait, cancel, interrupt, resume and steer; resume preserves loaded requirements/model/depth and returns a new ID. Inspect failed-run evidence before resuming; no automatic replay or model fallback. Output text is truncated at 24,000 characters; full result is at outputPath. A child can report to its parent with action:report.",
 		parameters,
-		async execute(_callId, params: Params, signal, _onUpdate, ctx) {
+		async execute(_callId, input: Params, signal, _onUpdate, ctx) {
+			const params = validateParams(input);
+			const options = params.options ?? {};
 			if (signal?.aborted) throw new Error("Subagent call was cancelled before launch");
 			const defaults = loadDefaults();
 			const c = getController(ctx);
 			if (params.action) {
-				for (const key of ["task", "requirementsFile", "model", "maxDepth", "context", "cwd", "timeoutMs"] as const) if (params[key] !== undefined) throw new Error(`${key} cannot override a management/resume operation`);
+				for (const key of ["task", "options"] as const) if (params[key] !== undefined) throw new Error(`${key} cannot override a management/resume operation`);
 				if (params.action === "report") {
 					if (!binding || !params.message?.trim()) throw new Error("report requires a child runtime and message");
 					binding.report(params.message); return response({ delivered: true });
@@ -101,13 +84,13 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 			}
 			if (!params.task?.trim()) throw new Error("task is required");
 			if (params.id || params.message) throw new Error("id/message require a management action");
-			const nextDepth = childDepth(depth, params.maxDepth);
-			const cwd = resolve(ctx.cwd, params.cwd ?? ".");
+			const nextDepth = childDepth(depth, options.maxDepth);
+			const cwd = resolve(ctx.cwd, options.cwd ?? ".");
 			if (!statSync(cwd).isDirectory()) throw new Error(`cwd is not a directory: ${cwd}`);
-			const requirements = params.requirementsFile ? readRequirements(params.requirementsFile, ctx.cwd) : undefined;
-			const model = selectModel(params.model, ctx.model, pi.getThinkingLevel(), await ctx.modelRegistry.getAvailable());
-			const context = params.context ?? "fresh";
-			const contract: Contract = { version: 1, task: params.task, cwd, model, context, depth: nextDepth, timeoutMs: params.timeoutMs ?? defaults.timeoutMs,
+			const requirements = options.requirementsFile ? readRequirements(options.requirementsFile, ctx.cwd) : undefined;
+			const model = selectModel(options.model, ctx.model, pi.getThinkingLevel(), await ctx.modelRegistry.getAvailable());
+			const context = options.context ?? "fresh";
+			const contract: Contract = { version: 1, task: params.task, cwd, model, context, depth: nextDepth, timeoutMs: options.timeoutMs ?? defaults.timeoutMs,
 				...(requirements ? { requirements } : {}),
 				...(context === "fork" ? { contextMessages: forkMessages(buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId()).messages) } : {}),
 			};
