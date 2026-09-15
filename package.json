@@ -1,34 +1,20 @@
 {
   "name": "pi-subagents",
   "version": "0.67.0",
-  "description": "Pi extension for single-agent delegation and scripted multi-agent workflows",
+  "description": "Independently maintained generic Pi child executor",
   "author": "Nico Bailon",
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./index.ts",
-    "./background-work": "./src/api/background-work.ts",
-    "./external-job-provider": "./src/api/external-job-provider.ts",
-    "./external-runs": "./src/api/external-runs.ts",
-    "./agents": "./src/api/agents.ts",
-    "./delegation": "./src/api/delegation.ts",
-    "./capability-ceiling": "./src/api/capability-ceiling.ts",
-    "./workflow-resources": "./src/api/workflow-resources.ts",
-    "./required-child-extensions": "./src/api/required-child-extensions.ts",
-    "./preflight": "./src/api/preflight.ts",
-    "./control-channel": "./src/api/control-channel.ts",
-    "./intercom-bridge": "./src/api/intercom-bridge.ts",
-    "./child-tool-plan": "./src/api/child-tool-plan.ts",
-    "./shared-types": "./src/api/shared-types.ts",
-    "./project-panes": "./src/api/project-panes.ts"
+    ".": "./index.ts"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nicobailon/pi-subagents.git"
+    "url": "git+https://github.com/cheng6563/pi-subagents.git"
   },
-  "homepage": "https://github.com/nicobailon/pi-subagents#readme",
+  "homepage": "https://github.com/cheng6563/pi-subagents#readme",
   "bugs": {
-    "url": "https://github.com/nicobailon/pi-subagents/issues"
+    "url": "https://github.com/cheng6563/pi-subagents/issues"
   },
   "keywords": [
     "pi-package",
@@ -39,37 +25,28 @@
     "agents",
     "cli"
   ],
-  "bin": {
-    "pi-subagents": "install.mjs"
-  },
   "files": [
     "index.ts",
     "src/**/*.ts",
     "*.mjs",
-    "agents/",
-    "skills/**/*",
-    "prompts/**/*",
+    "skills/pi-subagents/**/*",
     "docs/**/*",
     "README.md",
     "CHANGELOG.md"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:unit",
-    "test:unit": "node --experimental-strip-types --import ./test/support/isolated-temp-root.mjs --test test/unit/*.test.ts",
-    "test:integration": "node --experimental-strip-types --import ./test/support/register-loader.mjs --test test/integration/*.test.ts",
-    "test:all": "npm run test:unit && npm run test:integration"
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test:integration": "node --experimental-strip-types test/integration.mts"
   },
   "pi": {
     "extensions": [
       "./index.ts"
     ],
     "skills": [
-      "./skills"
+      "./skills/pi-subagents"
     ],
-    "prompts": [
-      "./prompts"
-    ]
+    "prompts": []
   },
   "peerDependencies": {
     "@earendil-works/pi-agent-core": "*",
