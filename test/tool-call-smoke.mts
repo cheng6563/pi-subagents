@@ -35,6 +35,10 @@ const cases = [
     name: "depth-two", keys: ["async", "options", "task"], marker: "DEPTH2_TOOL_OK",
     prompt: '只调用 subagent 工具一次，仅传 task、async:false、options:{maxDepth:2}。task 是：本次是用户明确授权的两层派生测试，不修改文件，不使用 Bash。先调用 subagent，task 为“只回复不应执行”、async:false、options:{maxDepth:3}，预期被拒绝，若未拒绝立即报告失败并停止；随后调用 subagent，只传 async:false 和 task：“不要调用工具，只根据当前工具定义判断：若没有 subagent，且有 bash、read、write，则只回复 DEPTH2_TOOL_OK；否则如实报告异常。” 最后报告首次拒绝信息及第二次调用结果。工具结束后简短报告，不再调用工具。',
   },
+  {
+    name: "multiline", keys: ["async", "task"], marker: "000\\n001",
+    prompt: '只调用 subagent 一次，仅传 task、async:false。task 为：“这是一次 UI 多行输出测试。不要调用工具，不要修改文件。最终只输出 000 到 100 的连续三位编号，每个编号独占一行，相邻编号之间一个真实换行，共101行、100个换行。末尾不要额外换行。不要代码块、空行、称呼或解释，不要省略编号。” 工具返回后仅简短报告是否完成，不要复述数字，不再调用工具。',
+  },
   { name: "interrupt-resume", keys: ["async", "options", "task"], marker: "RESUME_SNAPSHOT_OK", prompt: "" },
 ];
 const selectedNames = new Set(process.argv.slice(2));
@@ -68,7 +72,8 @@ for (const spec of cases.filter(spec => selectedNames.size === 0 || selectedName
     } }],
   });
   await loader.reload();
-  const { session } = await sdk.createAgentSession({ cwd: directory, modelRuntime: runtime, model, thinkingLevel: "off", resourceLoader: loader, settingsManager, sessionManager: sdk.SessionManager.inMemory(directory), tools: ["subagent"] });
+  const parentSession = sdk.SessionManager.create(directory, join(directory, "parent-session"));
+  const { session } = await sdk.createAgentSession({ cwd: directory, modelRuntime: runtime, model, thinkingLevel: spec.name === "multiline" ? (process.env.PI_REASONING_LEVEL || "high") : "off", resourceLoader: loader, settingsManager, sessionManager: parentSession, tools: ["subagent"] });
   const timer = setTimeout(() => void session.abort(), 180000);
   try {
     await session.bindExtensions({ mode: "print", onError: (error: any) => { throw new Error(String(error.error)); } });
@@ -123,6 +128,7 @@ for (const spec of cases.filter(spec => selectedNames.size === 0 || selectedName
     assert.equal(result.run.status, "completed", JSON.stringify(result));
     assert.equal(notifications.filter(n => n.details?.type === "complete" && n.details.runId === result.run.id).length, 0, "Synchronous results must not also be delivered as subagent notices");
     assert.match(result.output, new RegExp(spec.marker));
+    if (spec.name === "multiline") assert.equal(result.output, Array.from({ length: 101 }, (_, i) => String(i).padStart(3, "0")).join("\n"), "Multiline output must contain all 101 numbers and exactly 100 newlines");
     const contract = readJson(join(result.run.dir, "contract.json"));
     if (spec.name === "markdown-lowCost") {
       assert.equal(`${contract.model.provider}/${contract.model.id}`, resolveSharedModelReference("shared:lowCost"));
@@ -141,7 +147,7 @@ for (const spec of cases.filter(spec => selectedNames.size === 0 || selectedName
       assert.deepEqual(child.depth, { depth: 2, maxDepth: 2 });
       assert.equal(readFileSync(join(children, ids[0]!, "output.md"), "utf8").trim(), "DEPTH2_TOOL_OK");
     }
-    summaries.push({ name: spec.name, status: "passed", runId: result.run.id, output: result.output, toolCalls: calls });
+    summaries.push({ name: spec.name, status: "passed", runId: result.run.id, runDir: result.run.dir, parentSession: parentSession.getSessionFile(), localAppData: process.env.LOCALAPPDATA, output: result.output, toolCalls: calls });
     console.log(JSON.stringify(summaries.at(-1)));
   } finally {
     clearTimeout(timer);

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getMarkdownTheme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, Markdown, SelectList, Text, matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SelectList, Text, matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import type { RunController, Notice } from "./controller.ts";
 import { isTerminal, listRuns, type Run } from "./store.ts";
 import { contentText, createViewReader, type RunView } from "./progress.ts";
@@ -19,13 +19,20 @@ function elapsed(run: Run): string {
 }
 function stats(v: RunView): string {
 	const p = v.progress;
-	return `${elapsed(v.run)} · ${p?.tools ?? "—"} tools · ${p?.tokens ?? "—"} tokens${p?.cost ? ` · $${p.cost.toFixed(4)}` : ""}`;
+	const tokens = p?.tokens || (v.run.status === "completed" && p?.tokens === 0 ? 0 : "—");
+	return `${elapsed(v.run)} · ${p?.tools ?? "—"} 次工具 · ${tokens} tokens${p?.cost ? ` · $${p.cost.toFixed(4)}` : ""}`;
 }
 function singleLine(text: string): string { return text.replace(/[\r\n]+/g, " "); }
+function brief(text: string, width: number): string { return truncateToWidth(singleLine(text).split(/(?<=[。！？])/u)[0]?.trim() ?? "", width); }
+function activity(v: RunView): string {
+	if (isTerminal(v.run.status)) return labels[v.run.status]!;
+	const current = v.progress?.activity;
+	return current && !labels[current] ? current : labels[v.run.status]!;
+}
 function dynamic(render: (width: number) => string[]): Component { return { render, invalidate() {} }; }
 
 export function renderRunCall(args: Params, theme: Theme): Component {
-	return dynamic(width => new Text(`${theme.fg("toolTitle", theme.bold("子代理"))} ${args.action ?? (args.async === false ? "同步" : "启动")} ${args.id?.slice(0, 8) ?? ""}\n${args.task ?? ""}${args.options?.model ? `\n模型 ${args.options.model}` : ""}`, 0, 0).render(width));
+	return dynamic(width => [truncateToWidth(`${theme.fg("toolTitle", theme.bold("子代理"))} ${args.action ?? (args.async === false ? "同步" : "启动")} ${args.id?.slice(0, 8) ?? ""}${args.task ? ` · ${brief(args.task, 72)}` : ""}`, width)]);
 }
 export function createRunResultRenderer() {
 	const readView = createViewReader();
@@ -33,20 +40,31 @@ export function createRunResultRenderer() {
 		const data = result.details as { run?: Run; output?: string; id?: string; dir?: string } | Run[] | undefined;
 		const runs = Array.isArray(data) ? data : data && ("run" in data && data.run ? [data.run] : "dir" in data && data.dir ? [data as Run] : []);
 		if (!runs?.length) return new Text(contentText(result.content), 0, 0).render(width);
-		const box = new Container();
+		const lines: string[] = [];
 		for (const run of runs.slice(0, options.expanded ? runs.length : 5)) {
 			try {
 				const v = readView(run);
-				box.addChild(new Text(`${state(run.status, theme)} ${theme.fg("accent", run.id.slice(0, 8))} · ${stats(v)}\n${v.model} · ${v.thinking} · 深度 ${v.depth}\n${singleLine(v.task)}`, 0, 0));
-				if (run.error) box.addChild(new Text(theme.fg("error", run.error), 0, 0));
-				if (!isTerminal(run.status)) box.addChild(new Text(theme.fg("muted", v.progress?.activity ?? "启动中"), 0, 0));
-				const output = !Array.isArray(data) && data && "output" in data ? data.output : v.progress?.text;
-				if (output) box.addChild(options.expanded ? new Markdown(output, 0, 0, getMarkdownTheme()) : new Text(output.split("\n").slice(0, 4).join("\n").slice(0, 600), 0, 0));
-				if (options.expanded) box.addChild(new Text(theme.fg("dim", `ID ${run.id}\n产物 ${run.outputPath}\n/subagents-fleet 查看会话和控制运行`), 0, 0));
-			} catch (error) { box.addChild(new Text(`${run.id} · ${run.status}\n${String(error)}`, 0, 0)); }
+				lines.push(`${state(run.status, theme)} ${theme.fg("accent", run.id.slice(0, 8))} · ${v.model}`, theme.fg("dim", stats(v)));
+				if (Array.isArray(data)) lines.push(brief(v.task, width));
+				if (options.expanded) lines.push(...new Text(`任务：${v.task}\n${v.thinking} · 深度 ${v.depth} · ${v.context}`, 0, 0).render(width));
+				if (run.error) {
+					const error = new Text(theme.fg("error", run.error), 0, 0).render(width);
+					lines.push(...(options.expanded ? error : error.slice(0, 2)));
+				}
+				if (!isTerminal(run.status)) lines.push(theme.fg("muted", activity(v)));
+				const resultOutput = !Array.isArray(data) && data && "output" in data ? data.output : undefined;
+				const output = resultOutput || v.progress?.text;
+				if (output) {
+					if (isTerminal(run.status) && run.status !== "completed") lines.push(theme.fg("warning", "未完成输出："));
+					// Tool output is literal text: soft Markdown line breaks must not merge numbered lines.
+					const rendered = new Text(output, 0, 0).render(width);
+					lines.push(...(options.expanded ? rendered : rendered.slice(0, 4)));
+					if (!options.expanded && rendered.length > 4) lines.push(theme.fg("dim", `… 另有 ${rendered.length - 4} 行，展开或 /subagents-fleet 查看`));
+				}
+				if (options.expanded) lines.push(...new Text(theme.fg("dim", `ID ${run.id}\n产物 ${run.outputPath}\n日志 ${join(run.dir, "runner.log")}`), 0, 0).render(width));
+			} catch (error) { lines.push(...new Text(`${run.id} · ${run.status}\n${String(error)}`, 0, 0).render(width)); }
 		}
-		if (!options.expanded) box.addChild(new Text(theme.fg("dim", "/subagents-fleet 查看详情"), 0, 0));
-		return box.render(width);
+		return lines.map(line => truncateToWidth(line, width));
 	});
 }
 export function renderRunNotice(notice: Notice, expanded: boolean, theme: Theme): Component {
@@ -54,14 +72,10 @@ export function renderRunNotice(notice: Notice, expanded: boolean, theme: Theme)
 }
 export function renderRoster(views: RunView[], theme: Theme, width: number): string[] {
 	const active = views.filter(v => !isTerminal(v.run.status));
-	const recent = views.filter(v => isTerminal(v.run.status)).slice(0, 2);
 	if (!views.length) return [];
-	const visible = [...active, ...recent].slice(0, 5);
-	const lines = [theme.fg("accent", `子代理 · ${active.length} 运行 · ${views.length} 记录 · /subagents-fleet`)];
-	for (const v of visible) {
-		lines.push(`${state(v.run.status, theme)} ${v.run.id.slice(0, 8)} · ${elapsed(v.run)} · ${singleLine(v.task)}`);
-		lines.push(theme.fg("dim", `  ${v.model} · ${v.progress?.activity ?? labels[v.run.status]} · ${v.progress?.tools ?? "—"} tools`));
-	}
+	const visible = active.slice(0, 3);
+	const lines = [theme.fg("dim", `子代理 · ${active.length} 运行 · ${views.length} 记录 · /subagents-fleet`)];
+	for (const v of visible) lines.push(`${v.run.id.slice(0, 8)} ${activity(v)} · ${elapsed(v.run)} · ${brief(v.task, 36)}`);
 	if (active.length > visible.length) lines.push(theme.fg("dim", `另有 ${active.length - visible.length} 个运行，打开详情查看`));
 	return lines.map(line => truncateToWidth(line, width));
 }
@@ -97,7 +111,7 @@ export class FleetComponent implements Component {
 	}
 	private selection(): SelectList {
 		const t = this.theme;
-		const list = new SelectList(this.views.map(v => ({ value: v.run.id, label: `${labels[v.run.status]} ${v.run.id.slice(0, 8)} ${singleLine(v.task)}`, description: `${v.model} · ${elapsed(v.run)}` })), Math.min(5, Math.max(1, Math.floor(this.height() / 5))), {
+		const list = new SelectList(this.views.map(v => ({ value: v.run.id, label: `${labels[v.run.status]} ${v.run.id.slice(0, 8)} ${brief(v.task, 64)}`, description: `${v.model} · ${elapsed(v.run)}` })), Math.min(5, Math.max(1, Math.floor(this.height() / 5))), {
 			selectedPrefix: s => t.fg("accent", s), selectedText: s => t.fg("accent", s), description: s => t.fg("dim", s), scrollInfo: s => t.fg("dim", s), noMatch: s => s,
 		});
 		list.setSelectedIndex(Math.max(0, this.views.findIndex(v => v.run.id === this.selectedId)));
@@ -131,7 +145,7 @@ export class FleetComponent implements Component {
 			for (const line of readFileSync(path, "utf8").split("\n")) {
 				try {
 					const entry = JSON.parse(line);
-					if (entry.type === "message" && entry.message) chunks.push(`## ${entry.message.role}${entry.message.toolName ? ` · ${entry.message.toolName}` : ""}\n${contentText(entry.message.content)}`);
+					if (entry.type === "message" && entry.message) chunks.push(`${entry.message.role}${entry.message.toolName ? ` · ${entry.message.toolName}` : ""}\n${contentText(entry.message.content)}`);
 				} catch { /* A live JSONL file can end with an incomplete entry. */ }
 			}
 			this.transcriptCache = { key, text: chunks.join("\n\n") };
@@ -142,14 +156,16 @@ export class FleetComponent implements Component {
 		if (width < 36 || this.height() < 12) return new Text("子代理详情至少需要 36 列、12 行；Esc 关闭。", 0, 0).render(width);
 		const t = this.theme;
 		const v = this.views.find(v => v.run.id === this.selectedId);
-		const header = [t.fg("accent", t.bold("子代理运行详情")), ...this.selection().render(width), t.fg("borderMuted", "─".repeat(Math.max(0, width)))];
+		const header = [t.fg("borderMuted", "─".repeat(Math.max(0, width))), t.fg("accent", t.bold("子代理运行详情")), ...this.selection().render(width), t.fg("borderMuted", "─".repeat(Math.max(0, width)))];
 		let body: string[] = [];
 		if (v) {
-			const meta = `${state(v.run.status, t)} · ${stats(v)}\n${v.model} · ${v.thinking} · 深度 ${v.depth} · ${v.context}\nID ${v.run.id}\n目录 ${v.cwd}${v.requirements ? `\n要求 ${v.requirements}` : ""}\n产物 ${v.run.outputPath}${v.run.sessionFile ? `\n会话 ${v.run.sessionFile}` : ""}${v.run.error ? `\n错误 ${v.run.error}` : ""}`;
+			const meta = `${state(v.run.status, t)} · ${stats(v)}\n${v.model} · ${v.thinking} · 深度 ${v.depth} · ${v.context}\nID ${v.run.id}${v.run.error ? `\n错误 ${v.run.error}` : ""}`;
 			let text: string;
-			try { text = this.transcript ? this.conversation(v) : `## 任务\n${v.task}\n\n## 当前进度\n${v.progress?.activity ?? labels[v.run.status]}${v.progress?.toolInput ? `\n\n工具输入：${v.progress.toolInput}` : ""}${v.progress?.toolOutput ? `\n\n工具输出：\n${v.progress.toolOutput}` : ""}\n\n## 输出\n${isTerminal(v.run.status) && existsSync(v.run.outputPath) ? readFileSync(v.run.outputPath, "utf8") : v.progress?.text ?? ""}`; }
-			catch (error) { text = `读取失败：${String(error)}`; }
-			body = [...new Text(meta, 0, 0).render(width), ...new Markdown(text, 0, 0, getMarkdownTheme()).render(width)];
+			try {
+				const saved = isTerminal(v.run.status) && existsSync(v.run.outputPath) ? readFileSync(v.run.outputPath, "utf8") : "";
+				text = this.transcript ? this.conversation(v) : `当前：${activity(v)}\n\n${isTerminal(v.run.status) && v.run.status !== "completed" ? "未完成输出" : "输出"}\n${saved || v.progress?.text || "等待输出…"}\n\n任务\n${v.task}${v.progress?.toolInput ? `\n\n最近工具输入：${v.progress.toolInput}` : ""}${v.progress?.toolOutput ? `\n\n最近工具输出：\n${v.progress.toolOutput}` : ""}\n\n目录 ${v.cwd}${v.requirements ? `\n要求 ${v.requirements}` : ""}\n产物 ${v.run.outputPath}${v.run.sessionFile ? `\n会话 ${v.run.sessionFile}` : ""}`;
+			} catch (error) { text = `读取失败：${String(error)}`; }
+			body = [...new Text(meta, 0, 0).render(width), ...new Text(text, 0, 0).render(width)];
 		} else body = ["当前会话没有子代理运行。"];
 		const help = new Text(`↑↓ 选择 · Enter/Tab ${this.transcript ? "概览" : "会话"} · PgUp/PgDn 滚动\np 暂停 · D 取消 · c 恢复 · s 补充 · r 刷新 · Esc 关闭${this.notice ? `\n${this.notice}` : ""}`, 0, 0).render(width);
 		this.pageSize = Math.max(1, this.height() - header.length - help.length - 2);
@@ -190,8 +206,9 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 		attach(ctx); fleetOpen = true; refresh();
 		let refreshTimer: ReturnType<typeof setInterval> | undefined;
 		try {
+			// Fullscreen Pi consumes viewport paging keys unless a focused overlay owns them.
 			await ctx.ui.custom<void>((tui, theme, _keys, done) => {
-				const component = new FleetComponent(() => views(ctx), theme, () => tui.requestRender(), () => done(), () => Math.max(12, tui.terminal.rows - 5), async (action, view) => {
+				const component = new FleetComponent(() => views(ctx), theme, () => tui.requestRender(), () => done(), () => Math.floor(tui.terminal.rows * 0.9), async (action, view) => {
 					const c = getController(ctx);
 					if (resolve(view.run.dir) !== resolve(c.root, view.run.id)) throw new Error("后代运行仅供查看；控制操作须交给它所属的父代理。");
 					if (action === "steer") { const message = await ctx.ui.input("补充子代理任务", view.run.id); if (!message?.trim()) return false; c.steer(view.run.id, message); return; }
@@ -201,7 +218,7 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 				});
 				refreshTimer = setInterval(() => component.refresh(), 250);
 				return component;
-			});
+			}, { overlay: true, overlayOptions: { width: "100%", maxHeight: "90%", anchor: "center" } });
 		} finally { if (refreshTimer) clearInterval(refreshTimer); fleetOpen = false; refresh(); }
 	};
 	pi.registerCommand("subagents-fleet", { description: "查看子代理实时状态、完整会话及运行控制", handler: open });

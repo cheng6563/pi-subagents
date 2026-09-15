@@ -47,7 +47,7 @@ let notices = 0;
 let closeCustom: (() => void) | undefined;
 const actions: any[] = [];
 const controller = { root: runsRoot, list: () => listRuns(runsRoot), cancel: async (id: string, pause: boolean) => { actions.push([pause ? "pause" : "cancel", id]); }, resume: async (id: string) => { actions.push(["resume", id]); }, steer: (id: string, text: string) => { actions.push(["steer", id, text]); } };
-const ctx = { hasUI: true, ui: { theme, setWidget: (_key: string, value: any) => { widget = value; }, notify() {}, confirm: async () => true, input: async () => "UI_STEER_MESSAGE", custom: (factory: any) => new Promise<void>(resolve => { closeCustom = resolve; component = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, {}, resolve); }) } };
+const ctx = { hasUI: true, ui: { theme, setWidget: (_key: string, value: any) => { widget = value; }, notify() {}, confirm: async () => true, input: async () => "UI_STEER_MESSAGE", custom: (factory: any, options: any) => new Promise<void>(resolve => { assert.equal(options?.overlay, true, "Fullscreen viewport keys must be routed to the focused inspector overlay"); closeCustom = resolve; component = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, {}, resolve); }) } };
 const lifecycle = ui.registerRunUI({ registerCommand: (name: string, value: any) => commands.set(name, value), registerMessageRenderer: (name: string, value: any) => renderers.set(name, value), on: (name: string, cb: any) => handlers.set(name, cb), sendMessage: () => { notices++; } }, () => controller);
 const frame = (name: string, c: any, width = 100) => {
   const lines = c.render(width);
@@ -92,6 +92,40 @@ try {
   assert.equal(notices, 0, "UI refreshes must never notify the model");
   assert.match(frame("notice", renderers.get("subagent-notice")({ details: { type: "complete", runId: done.id, status: "completed", outputPath: done.outputPath } }, { expanded: false }, theme)), /已完成/);
   assert.equal(reader(active).progress?.tools, 2);
+  const longTask = "这是一次 UI 多行输出测试。" + "HIDDEN_LONG_INSTRUCTION ".repeat(80);
+  const multiline = createRun(join(root, "render-only"), contract(longTask));
+  multiline.status = "completed"; saveRun(multiline);
+  const numbers = Array.from({ length: 101 }, (_, i) => String(i).padStart(3, "0"));
+  writeFileSync(multiline.outputPath, numbers.join("\n"), "utf8");
+  const callFrame = frame("multiline-call", ui.renderRunCall({ task: longTask, async: false }, theme));
+  assert.equal(callFrame.split("\n").length, 1);
+  assert.doesNotMatch(callFrame, /HIDDEN_LONG_INSTRUCTION/);
+  const result = { details: { run: multiline, output: numbers.join("\n") } };
+  const collapsed = frame("multiline-collapsed", renderResult(result, { expanded: false }, theme));
+  assert.ok(collapsed.split("\n").length <= 7);
+  assert.doesNotMatch(collapsed, /HIDDEN_LONG_INSTRUCTION|这是一次/);
+  assert.match(collapsed, /另有 97 行/);
+  const expanded = frame("multiline-expanded", renderResult(result, { expanded: true }, theme));
+  assert.deepEqual(expanded.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers, "All 100 literal newlines must survive expansion");
+  const multilineFleet = new ui.FleetComponent(() => [reader(multiline)], theme, () => {}, () => {}, () => 35, async () => {});
+  const seen = new Set<string>();
+  for (let page = 0; page < 8; page++) {
+    for (const line of frame(`multiline-page-${page}`, multilineFleet).split("\n").map(line => line.trim())) if (/^\d{3}$/.test(line)) seen.add(line);
+    multilineFleet.handleInput("\x1b[6~");
+  }
+  assert.deepEqual([...seen].sort(), numbers);
+  multilineFleet.dispose();
+  writeJson(join(multiline.dir, "progress.json"), { ...emptyProgress(), activity: "输出中", text: numbers.slice(0, 48).join("\n"), tokens: 0 });
+  const staleFailed = { ...multiline, status: "failed", error: "fixture failure" };
+  const failedPreview = frame("failed-partial", renderResult({ details: { run: staleFailed, output: "" } }, { expanded: false }, theme));
+  assert.match(failedPreview, /未完成输出/);
+  assert.doesNotMatch(failedPreview, /输出中|0 tokens/);
+  assert.equal(ui.renderRoster([reader(staleFailed), reader(done)], theme, 100).length, 1, "Idle widget must not repeat finished tasks");
+  const failedFleet = new ui.FleetComponent(() => [reader(staleFailed)], theme, () => {}, () => {}, () => 35, async () => {});
+  const failedFrame = frame("failed-authoritative-state", failedFleet);
+  assert.match(failedFrame, /当前：失败/);
+  assert.doesNotMatch(failedFrame, /输出中/);
+  failedFleet.dispose();
   console.log(`UI_COMPONENTS_PASS ${root}`);
 } finally {
   component?.dispose(); closeCustom?.(); lifecycle.dispose();

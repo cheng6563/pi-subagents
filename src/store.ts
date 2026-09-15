@@ -27,8 +27,14 @@ export function storeRoot(sessionId: string): string {
 export function writeJson(file: string, value: unknown): void {
 	mkdirSync(resolve(file, ".."), { recursive: true });
 	const temp = `${file}.${randomUUID()}.tmp`;
-	writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-	renameSync(temp, file);
+	try {
+		writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+		renameSync(temp, file);
+	} catch (error) {
+		try { unlinkSync(temp); }
+		catch (cleanup) { if ((cleanup as NodeJS.ErrnoException).code !== "ENOENT") console.error(JSON.stringify({ event: "json_temp_cleanup_failed", path: temp, error: String(cleanup) })); }
+		throw error;
+	}
 }
 export function saveRun(run: Run): void {
 	run.updatedAt = new Date().toISOString();

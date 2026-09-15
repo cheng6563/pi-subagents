@@ -42,9 +42,11 @@ subagent({
 
 ## 可视化
 
-交互模式显示调用／结果卡片和输入区上方的实时运行面板，包含任务、模型、状态、耗时、工具执行情况；展开结果可查看输出和产物路径。面板刷新不向模型发送消息。
+交互模式的调用卡片只显示一行任务摘要；结果卡片不重复任务正文，默认最多预览 4 行输出，展开后按原始换行完整显示。完整任务及路径在展开结果和详情中查看。运行面板仅列出活动任务，空闲时只保留一行记录入口，不重复已完成任务。面板刷新不向模型发送消息。
 
-`/subagents-fleet` 或 `/subagents` 打开详情界面，可查看当前会话的运行及后代、模型与 thinking、深度、用量、错误、实时输出和已保存的会话内容。
+进度快照属于展示缓存：Windows 暂时拒绝替换 `progress.json` 时保留旧快照，记录非致命错误，下一次正常更新再写入，不中断任务。最终状态以运行记录为准，不使用残留的“输出中”覆盖失败或完成；模型尚未返回用量时显示未知值。
+
+`/subagents-fleet` 或 `/subagents` 打开可接收翻页按键的原生焦点浮层，可查看当前会话的运行及后代、模型与 thinking、深度、用量、错误、实时输出和已保存的会话内容。
 
 - `↑/↓` 选择运行，`Enter/Tab` 切换概览与会话，`PgUp/PgDn` 或 `J/K` 滚动，`r` 刷新，`Esc` 关闭。
 - `p` 暂停、`D` 取消、`c` 恢复、`s` 补充任务；暂停、取消和恢复需要确认。后代记录可查看，控制须交给其所属父代理。
@@ -125,7 +127,7 @@ PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --
 
 单元测试覆盖要求快照、模型解析、深度、运行提示、完成交付归属和实时进度。集成测试使用真实宿主 SDK/进程/扩展与本地确定性 OpenAI 协议服务，不依赖模型推理；覆盖默认调用、MD、模型、工具可用性、派生、Bash/脚本执行、失败恢复、取消与通知。测试打印证据目录，结束时关闭本次创建的服务和子进程。在线供应商冒烟验证需单独运行并如实记录结果。
 
-在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、中文 MD 与低成本选择、两层派生及禁止增加深度、暂停后恢复原要求快照；测试同时断言同步结果没有完成通知、请求中不发送 `strict`，会产生实际模型请求：
+在 Pi shell 中运行以下测试，会使用当前选定的 OpenAI Responses 模型自主生成 `subagent` 调用参数，并启动真实子代理，验证默认工具可用性、中文 MD 与低成本选择、两层派生及禁止增加深度、101 行输出、暂停后恢复原要求快照；测试同时断言同步结果没有完成通知、请求中不发送 `strict`，会产生实际模型请求：
 
 ```bash
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/tool-call-smoke.mts
@@ -141,4 +143,17 @@ PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --
 
 ```bash
 python3 test/ui-pty.py <fixture.json绝对路径>
+```
+
+Windows 文件占用回归测试会拒绝替换进度文件，检查流式输出仍然完成、旧快照保持有效、解锁后更新恢复且没有临时文件泄漏：
+
+```bash
+python3 test/progress-lock.py
+```
+
+真实模型多行输出可单独运行。其父会话保存在证据目录；将生成的 `results.json` 作为第二个参数传给伪终端测试，可回放实际调用卡片并检查全部 101 行的展开与分页，不重复执行模型任务：
+
+```bash
+PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/tool-call-smoke.mts multiline
+python3 test/ui-pty.py <fixture.json绝对路径> <results.json绝对路径>
 ```

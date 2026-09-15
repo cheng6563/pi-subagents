@@ -5,10 +5,10 @@ import type { ChildSessionEvent } from "./runs/shared/child-session.ts";
 
 export interface RunProgress {
 	activity: string; text: string; tools: number; currentTool?: string; toolInput?: string; toolOutput?: string;
-	tokens: number; cost: number; updatedAt: string;
+	tokens?: number; cost?: number; updatedAt: string;
 }
 export function emptyProgress(): RunProgress {
-	return { activity: "启动中", text: "", tools: 0, tokens: 0, cost: 0, updatedAt: new Date().toISOString() };
+	return { activity: "启动中", text: "", tools: 0, updatedAt: new Date().toISOString() };
 }
 export function contentText(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -25,8 +25,10 @@ export function applyProgress(p: RunProgress, e: ChildSessionEvent): boolean {
 		else return false;
 	} else if (e.type === "message_end" && message?.role === "assistant") {
 		p.text = contentText(message.content).slice(-4000);
-		p.tokens += message.usage?.totalTokens ?? 0;
-		p.cost += message.usage?.cost?.total ?? 0;
+		if (message.usage) {
+			p.tokens = (p.tokens ?? 0) + (message.usage.totalTokens ?? 0);
+			p.cost = (p.cost ?? 0) + (message.usage.cost?.total ?? 0);
+		}
 	} else if (e.type === "tool_execution_start") {
 		p.tools++; p.currentTool = String(e.toolName); p.activity = `执行 ${p.currentTool}`;
 		p.toolInput = JSON.stringify(e.args ?? {}).slice(0, 2000); p.toolOutput = "";
@@ -41,7 +43,22 @@ export function applyProgress(p: RunProgress, e: ChildSessionEvent): boolean {
 export function progressWriter(run: Run) {
 	const progress = emptyProgress();
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	const flush = () => { if (timer) clearTimeout(timer); timer = undefined; writeJson(join(run.dir, "progress.json"), progress); };
+	let failedCode: string | undefined;
+	const path = join(run.dir, "progress.json");
+	const flush = () => {
+		if (timer) clearTimeout(timer); timer = undefined;
+		// A display snapshot is optional; Windows may temporarily deny replacing a file being read.
+		// Keep the prior snapshot and try the next normal update, never fail or replay the task.
+		try {
+			writeJson(path, progress);
+			if (failedCode) console.error(JSON.stringify({ event: "progress_snapshot_recovered", runId: run.id, path }));
+			failedCode = undefined;
+		} catch (error) {
+			const code = (error as NodeJS.ErrnoException).code ?? "unknown";
+			if (failedCode !== code) console.error(JSON.stringify({ event: "progress_snapshot_failed", runId: run.id, path, code, error: String(error), nonfatal: true }));
+			failedCode = code;
+		}
+	};
 	flush();
 	return {
 		update(e: ChildSessionEvent) { if (applyProgress(progress, e) && !timer) timer = setTimeout(flush, 150); },
