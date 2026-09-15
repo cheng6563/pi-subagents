@@ -60,7 +60,7 @@ export function createRunResultRenderer() {
 					const rendered = new Text(output, 0, 0).render(width);
 					if (!options.expanded && rendered.length > 4) {
 						const key = keyText("app.tools.expand");
-						lines.push(theme.fg("dim", `… 前 ${rendered.length - 4} 行已折叠 · ${key ? `${key} 展开` : "/subagents-fleet 查看"}`));
+						lines.push(theme.fg("dim", `… 前 ${rendered.length - 4} 行已折叠 · ${key ? `${key} 展开` : "/subagents 查看"}`));
 					}
 					lines.push(...(options.expanded ? rendered : rendered.slice(-4)));
 				}
@@ -77,7 +77,7 @@ export function renderRoster(views: RunView[], theme: Theme, width: number): str
 	const active = views.filter(v => !isTerminal(v.run.status));
 	if (!active.length) return [];
 	const visible = active.slice(0, 3);
-	const lines = [theme.fg("dim", `subagents · ${active.length} 运行 · ${views.length} 记录 · /subagents-fleet`)];
+	const lines = [theme.fg("dim", `subagents · ${active.length} 运行 · ${views.length} 记录 · /subagents`)];
 	for (const v of visible) lines.push(`${v.run.id.slice(0, 8)} ${activity(v)} · ${elapsed(v.run)} · ${brief(v.task, 36)}`);
 	if (active.length > visible.length) lines.push(theme.fg("dim", `另有 ${active.length - visible.length} 个运行，打开详情查看`));
 	return lines.map(line => truncateToWidth(line, width));
@@ -204,7 +204,7 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 		refresh();
 	};
 	const open = async (_args: string, ctx: ExtensionContext) => {
-		if (!ctx.hasUI) { ctx.ui.notify("/subagents-fleet 需要交互界面；非交互模式请使用 subagent list/status/result。", "info"); return; }
+		if (!ctx.hasUI) { ctx.ui.notify("/subagents 需要交互界面；非交互模式请使用 subagent list/status/result。", "info"); return; }
 		if (fleetOpen) return;
 		attach(ctx); fleetOpen = true; refresh();
 		let refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -224,7 +224,6 @@ export function registerRunUI(pi: ExtensionAPI, getController: (ctx: ExtensionCo
 			}, { overlay: true, overlayOptions: { width: "100%", maxHeight: "90%", anchor: "center" } });
 		} finally { if (refreshTimer) clearInterval(refreshTimer); fleetOpen = false; refresh(); }
 	};
-	pi.registerCommand("subagents-fleet", { description: "查看 subagents 实时状态、完整会话及运行控制", handler: open });
 	pi.registerCommand("subagents", { description: "打开 subagents 运行详情", handler: open });
 	pi.registerMessageRenderer<Notice>("subagent-notice", (message, options, theme) => message.details ? renderRunNotice(message.details, options.expanded, theme) : new Text(contentText(message.content), 0, 0));
 	pi.on("session_start", (_event, ctx) => attach(ctx));

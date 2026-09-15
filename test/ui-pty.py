@@ -72,7 +72,7 @@ try:
         wait_for(lambda text: {96, 100} <= numbers(text) and "前 97 行" not in text, "real-expanded-card")
         process.write("\x0f")
         wait_for(lambda text: "前 97 行" in text and {97, 98, 99, 100} <= numbers(text), "real-recollapsed-card")
-        process.write("/subagents-fleet\r")
+        process.write("/subagents\r")
         first = wait_for(lambda text: "subagents 运行详情" in text and 0 in numbers(text), "real-inspector")
         seen = numbers(first)
         for page in range(8):
@@ -95,7 +95,7 @@ try:
         staging.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
         staging.replace(progress_file)
         wait_for("PTY_LIVE_UPDATE", "live-update")
-        process.write("/subagents-fleet\r")
+        process.write("/subagents\r")
         wait_for("subagents 运行详情", "inspector")
         process.write("\r\x1b[6~")
         wait_for("UI_TRANSCRIPT_TOOL_RESULT", "transcript")

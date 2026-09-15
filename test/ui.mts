@@ -61,7 +61,7 @@ const frame = (name: string, c: any, width = 100) => {
   return text;
 };
 try {
-  assert.ok(commands.has("subagents-fleet") && commands.has("subagents"));
+  assert.deepEqual([...commands.keys()], ["subagents"]);
   handlers.get("session_start")({}, ctx);
   assert.equal(typeof widget, "function");
   const roster = frame("roster", widget({}, theme));
@@ -70,7 +70,7 @@ try {
   const renderResult = ui.createRunResultRenderer();
   assert.match(frame("completed-card", renderResult({ details: { run: done, output: "# Completed\nUI_OUTPUT_OK" } }, { expanded: true }, theme)), /UI_OUTPUT_OK/);
   assert.match(frame("failed-card", renderResult({ details: { run: failed, output: "" } }, { expanded: false }, theme)), /UI_FAILURE_DETAIL/);
-  const pending = commands.get("subagents-fleet").handler("", ctx);
+  const pending = commands.get("subagents").handler("", ctx);
   assert.ok(component);
   assert.match(frame("fleet", component), /fixture\/parent/);
   component.handleInput("\x1b[6~");
@@ -142,7 +142,7 @@ try {
   active.status = "completed"; saveRun(active);
   handlers.get("session_start")({}, ctx);
   assert.equal(widget, undefined, "All terminal runs must remove the widget, not leave an empty component");
-  const history = commands.get("subagents-fleet").handler("", ctx);
+  const history = commands.get("subagents").handler("", ctx);
   assert.match(frame("idle-history", component), /subagents 运行详情/);
   component.handleInput("\x1b");
   await history;
