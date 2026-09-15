@@ -87,10 +87,12 @@ writeFileSync(md, "ORIGINAL_REQUIREMENTS_中文", "utf8");
 const tools = new Map<string, any>();
 const handlers = new Map<string, any[]>();
 const notices: any[] = [];
+const uiEntries: any[] = [];
 const sessionId = randomUUID();
 const pi = {
   registerTool: (t: any) => tools.set(t.name, t),
-  registerCommand() {}, registerMessageRenderer() {},
+  registerCommand() {}, registerMessageRenderer() {}, registerEntryRenderer() {},
+  appendEntry: (customType: string, data: any) => uiEntries.push({ customType, data }),
   on: (name: string, cb: any) => { handlers.set(name, [...(handlers.get(name) ?? []), cb]); },
   getThinkingLevel: () => "off",
   sendMessage: (message: any) => notices.push(message),
@@ -130,7 +132,17 @@ try {
     assert.equal(response.details.run.status, "paused");
     assert.equal(updates.length, 1, "Interactive waiting must publish only the initial placeholder, not mutate history every tick");
     assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === response.details.run.id).length, 0);
-    results.push({ name: "interactive_static_history", status: "passed", updates: updates.length });
+    assert.equal(response.details.uiResultAtTail, true);
+    assert.equal(JSON.parse(response.content[0].text).uiResultAtTail, undefined, "UI routing metadata must not alter the model's tool result");
+    assert.equal(uiEntries.filter(e => e.data.view.run.id === response.details.run.id).length, 1);
+    const background = await tools.get("subagent").execute(randomUUID(), { task: "CASE_DEFAULT", async: true }, undefined, undefined, interactive);
+    const deadline = Date.now() + 15000;
+    while (!notices.some(n => n.details.type === "complete" && n.details.runId === background.details.id) && Date.now() < deadline) await delay(25);
+    const completion = notices.filter(n => n.details.type === "complete" && n.details.runId === background.details.id);
+    assert.equal(completion.length, 1, "UI-only entry must not replace the model's normal async completion delivery");
+    assert.equal(completion[0].display, false, "The model notification must not duplicate the user's result card");
+    assert.equal(uiEntries.filter(e => e.data.view.run.id === background.details.id).length, 1);
+    results.push({ name: "interactive_static_history_and_completion_entries", status: "passed", updates: updates.length, uiEntries: uiEntries.length });
   } else if (process.env.SUBAGENT_INTEGRATION_CASE === "tools") {
     await scenario("CASE_DEFAULT", {});
     await scenario("CASE_DISABLED", {});

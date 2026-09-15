@@ -5,33 +5,43 @@ import type { ChildSessionEvent } from "./runs/shared/child-session.ts";
 
 export interface RunProgress {
 	activity: string; text: string; tools: number; currentTool?: string; toolInput?: string; toolOutput?: string;
+	previewText?: string;
 	tokens?: number; cost?: number; updatedAt: string;
 }
 export function emptyProgress(): RunProgress {
-	return { activity: "启动中", text: "", tools: 0, updatedAt: new Date().toISOString() };
+	return { activity: "启动中", text: "", previewText: "", tools: 0, updatedAt: new Date().toISOString() };
 }
 export function contentText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
 	return content.map(p => p?.type === "text" ? p.text : p?.type === "toolCall" ? `[${p.name}] ${JSON.stringify(p.arguments)}` : "").filter(Boolean).join("\n");
 }
+function assistantText(content: unknown): string {
+	return Array.isArray(content) ? content.filter(p => p?.type === "text").map(p => p.text).join("\n") : typeof content === "string" ? content : "";
+}
+function toolBrief(name: string, args: unknown): string {
+	const verbs: Record<string, string> = { read: "读取文件", write: "写入文件", edit: "编辑文件", bash: "执行命令" };
+	const path = args && typeof args === "object" && "path" in args && typeof args.path === "string" ? args.path : "";
+	return `${verbs[name] ?? `执行工具 ${name}`}${["read", "write", "edit"].includes(name) && path ? ` ${path}` : ""}`;
+}
 export function applyProgress(p: RunProgress, e: ChildSessionEvent): boolean {
 	const message = e.message as { role?: string; content?: unknown; usage?: { totalTokens?: number; cost?: { total?: number } } } | undefined;
 	if (e.type === "message_start" && message?.role === "assistant") { p.activity = "生成中"; p.text = ""; }
 	else if (e.type === "message_update") {
 		const update = e.assistantMessageEvent as { type?: string; delta?: string } | undefined;
-		if (update?.type === "text_delta") { p.text = (p.text + (update.delta ?? "")).slice(-4000); p.activity = "输出中"; }
+		if (update?.type === "text_delta") { p.text = (p.text + (update.delta ?? "")).slice(-4000); p.previewText = p.text; p.activity = "输出中"; }
 		else if (update?.type === "thinking_delta") p.activity = "思考中";
 		else return false;
 	} else if (e.type === "message_end" && message?.role === "assistant") {
-		p.text = contentText(message.content).slice(-4000);
-		if (message.usage) {
-			p.tokens = (p.tokens ?? 0) + (message.usage.totalTokens ?? 0);
-			p.cost = (p.cost ?? 0) + (message.usage.cost?.total ?? 0);
-		}
+		p.text = assistantText(message.content).slice(-4000);
+		if (p.text.trim()) p.previewText = p.text;
+		if (message.usage?.totalTokens !== undefined) p.tokens = (p.tokens ?? 0) + message.usage.totalTokens;
+		if (message.usage?.cost?.total !== undefined) p.cost = (p.cost ?? 0) + message.usage.cost.total;
 	} else if (e.type === "tool_execution_start") {
 		p.tools++; p.currentTool = String(e.toolName); p.activity = `执行 ${p.currentTool}`;
 		p.toolInput = JSON.stringify(e.args ?? {}).slice(0, 2000); p.toolOutput = "";
+		// The dock gets prose or a small, explicit tool label, never serialized arguments/results.
+		p.previewText = p.text.trim() ? p.text : toolBrief(p.currentTool, e.args);
 	} else if (e.type === "tool_execution_update" || e.type === "tool_execution_end") {
 		const result = (e.result ?? e.partialResult) as { content?: unknown } | undefined;
 		p.toolOutput = contentText(result?.content).slice(-4000);
@@ -71,7 +81,7 @@ export function readProgress(run: Run): RunProgress | undefined {
 }
 export interface RunView {
 	run: Run; task: string; model: string; thinking: string; depth: string; context: string; cwd: string;
-	requirements?: string; progress?: RunProgress;
+	requirements?: string; progress?: RunProgress; parentId?: string;
 }
 export function createViewReader(): (run: Run, includeProgress?: boolean) => RunView {
 	const summaries = new Map<string, Omit<RunView, "run" | "progress">>();

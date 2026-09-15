@@ -39,11 +39,13 @@ writeFileSync(active.sessionFile, [{ type: "message", message: { role: "user", c
 saveRun(active);
 const child = createRun(join(active.dir, "children"), contract("UI_NESTED_CASE", 2));
 child.status = "completed"; saveRun(child);
-writeJson(join(active.dir, "progress.json"), { ...emptyProgress(), tools: 2, currentTool: "bash", activity: "执行 bash", text: "UI_STREAMING_TEXT", tokens: 42 });
+writeJson(join(active.dir, "progress.json"), { ...emptyProgress(), tools: 2, currentTool: "bash", activity: "执行 bash", text: "UI_STREAMING_TEXT", previewText: "UI_STREAMING_TEXT", tokens: 42 });
 const reader = createViewReader();
 const commands = new Map<string, any>();
 const handlers = new Map<string, any>();
 const renderers = new Map<string, any>();
+const entryRenderers = new Map<string, any>();
+const completionEntries: any[] = [];
 let widget: any;
 let widgetComponent: any;
 let widgetCalls = 0;
@@ -54,7 +56,7 @@ let closeCustom: (() => void) | undefined;
 const actions: any[] = [];
 const controller = { root: runsRoot, list: () => listRuns(runsRoot), cancel: async (id: string, pause: boolean) => { actions.push([pause ? "pause" : "cancel", id]); }, resume: async (id: string) => { actions.push(["resume", id]); }, steer: (id: string, text: string) => { actions.push(["steer", id, text]); } };
 const ctx = { hasUI: true, ui: { theme, setWidget: (_key: string, value: any, options?: any) => { widgetCalls++; widget = value; placement = options?.placement; widgetComponent = typeof value === "function" ? value({ terminal: { columns: 100, rows: 40 }, requestRender() {} }, theme) : undefined; }, notify() {}, confirm: async () => true, input: async () => "UI_STEER_MESSAGE", custom: (factory: any, options: any) => new Promise<void>(resolve => { assert.equal(options?.overlay, true, "Fullscreen viewport keys must be routed to the focused inspector overlay"); closeCustom = resolve; component = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, {}, resolve); }) } };
-const lifecycle = ui.registerRunUI({ registerCommand: (name: string, value: any) => commands.set(name, value), registerMessageRenderer: (name: string, value: any) => renderers.set(name, value), on: (name: string, cb: any) => handlers.set(name, cb), sendMessage: () => { notices++; } }, () => controller);
+const lifecycle = ui.registerRunUI({ registerCommand: (name: string, value: any) => commands.set(name, value), registerMessageRenderer: (name: string, value: any) => renderers.set(name, value), registerEntryRenderer: (name: string, value: any) => entryRenderers.set(name, value), appendEntry: (name: string, data: any) => { completionEntries.push({ customType: name, data }); session.appendCustomEntry(name, data); }, on: (name: string, cb: any) => handlers.set(name, cb), sendMessage: () => { notices++; } }, () => controller);
 const frame = (name: string, c: any, width = 100) => {
   const lines = c.render(width);
   if (c === component) assert.ok(lines.length <= 35, "Inspector must leave room for Pi footer/editor framing");
@@ -79,7 +81,7 @@ try {
   assert.equal(widgetComponent, mountedComponent);
   for (const width of [24, 40, 80, 100]) {
     for (const text of ["", "short", "long".repeat(1000), "中文🙂\t".repeat(300), "\x1b[31mred\x1b[0m\n".repeat(30)]) {
-      const view = { ...reader(active), progress: { ...emptyProgress(), text } };
+      const view = { ...reader(active), progress: { ...emptyProgress(), text, previewText: text } };
       const lines = ui.renderRoster([view], theme, width);
       assert.equal(lines.length, ui.LIVE_PANEL_ROWS);
       assert.ok(lines.every((line: string) => tui.visibleWidth(line) <= width && !line.includes("\t")));
@@ -88,6 +90,24 @@ try {
     assert.equal(preview.hidden, 2);
     assert.deepEqual(preview.lines.map((line: string) => line.slice(0, 5)), ["ROW_2", "ROW_3", "ROW_4", "ROW_5"]);
   }
+  assert.equal(completionEntries.length, 0, "Opening existing history does not replay old completions");
+  const forest = [
+    { ...reader(active), task: "ROOT", progress: { ...emptyProgress(), tools: 3, cost: 0.03, tokens: 9999, previewText: "不要这一段\n\n最新\n说明", toolInput: "PRIVATE_FILE_BODY", toolOutput: "PRIVATE_TOOL_RETURN" } },
+    { ...reader(child), parentId: active.id, task: "CHILD" },
+    { ...reader(active), run: { ...active, id: "grandchild" }, parentId: child.id, task: "GRANDCHILD" },
+    { ...reader(active), run: { ...active, id: "other-root" }, task: "OTHER" },
+  ];
+  const forestLines = ui.renderRoster(forest, theme, 150).map(stripVTControlCharacters);
+  assert.match(forestLines[1], /^├─ .*ROOT.*tools 3 · \$0\.03.*最新 说明/);
+  assert.match(forestLines[2], /^│  └─ .*CHILD/);
+  assert.match(forestLines[3], /^│     └─ .*GRANDCHILD/);
+  assert.match(forestLines[4], /^└─ .*OTHER/);
+  assert.doesNotMatch(forestLines.join("\n"), /不要这一段|PRIVATE_|9999|tokens|1\.2kt/);
+  assert.equal(forestLines.length, ui.LIVE_PANEL_ROWS);
+  const many = Array.from({ length: 12 }, (_, i) => ({ ...reader(active), run: { ...active, id: `root-${i}` }, task: `ROOT_${i}` }));
+  const overflow = ui.renderRoster(many, theme, 100).map(stripVTControlCharacters);
+  assert.equal(overflow.length, ui.LIVE_PANEL_ROWS);
+  assert.match(overflow.at(-1)!, /另 6 项/);
   const renderResult = ui.createRunResultRenderer();
   assert.match(frame("completed-card", renderResult({ details: { run: done, output: "# Completed\nUI_OUTPUT_OK" } }, { expanded: true }, theme)), /UI_OUTPUT_OK/);
   assert.match(frame("failed-card", renderResult({ details: { run: failed, output: "" } }, { expanded: false }, theme)), /UI_FAILURE_DETAIL/);
@@ -172,9 +192,38 @@ try {
   assert.match(failedFrame, /当前：失败/);
   assert.doesNotMatch(failedFrame, /输出中/);
   failedFleet.dispose();
+  const receiptBefore = renderResult({ details: { ...active, uiResultAtTail: true } }, { expanded: false }, theme).render(100);
+  writeFileSync(active.outputPath, "COMPLETION_UI_ONLY_MARKER", "utf8");
   active.status = "completed"; saveRun(active);
   handlers.get("session_start")({}, ctx);
   assert.equal(widget, undefined, "All terminal runs must remove the widget, not leave an empty component");
+  assert.equal(completionEntries.length, 1);
+  assert.equal(completionEntries[0].customType, ui.COMPLETION_ENTRY);
+  const completion = frame("completion-entry", entryRenderers.get(ui.COMPLETION_ENTRY)({ data: completionEntries[0].data }, { expanded: false }, theme));
+  assert.match(completion, /COMPLETION_UI_ONLY_MARKER/);
+  const receiptAfter = renderResult({ details: { run: active, output: "COMPLETION_UI_ONLY_MARKER", uiResultAtTail: true } }, { expanded: false }, theme).render(100);
+  assert.deepEqual(receiptAfter, receiptBefore, "Synchronous final results must not replace the launch receipt");
+  lifecycle.refresh(); lifecycle.refresh();
+  assert.equal(completionEntries.length, 1, "One durable entry per terminal run");
+  const modelContext = sdk.buildSessionContext(session.getEntries(), session.getLeafId()).messages;
+  assert.doesNotMatch(JSON.stringify(modelContext), /COMPLETION_UI_ONLY_MARKER|subagents-completion/);
+  assert.ok(session.getEntries().some((entry: any) => entry.type === "custom" && entry.data?.output === "COMPLETION_UI_ONLY_MARKER"));
+  const reopened = sdk.SessionManager.open(session.getSessionFile(), join(root, "sessions"));
+  const restored = reopened.getEntries().find((entry: any) => entry.customType === ui.COMPLETION_ENTRY);
+  assert.match(frame("restored-completion-entry", entryRenderers.get(ui.COMPLETION_ENTRY)(restored, { expanded: true }, theme)), /COMPLETION_UI_ONLY_MARKER/);
+  const batchParent = createRun(runsRoot, contract("BATCH_PARENT"));
+  batchParent.status = "running"; saveRun(batchParent);
+  const releaseBatch = lifecycle.beginLaunch(ctx);
+  const batchChild = createRun(join(batchParent.dir, "children"), contract("BATCH_CHILD", 2));
+  batchChild.status = "completed"; saveRun(batchChild);
+  const batchPeer = createRun(runsRoot, contract("BATCH_PEER"));
+  batchPeer.status = "failed"; saveRun(batchPeer);
+  lifecycle.refresh();
+  assert.equal(completionEntries.length, 3, "Concurrent and nested terminal records each append once, including a fast unseen child");
+  assert.equal(completionEntries.find(e => e.data.view.run.id === batchChild.id).data.view.parentId, batchParent.id);
+  batchParent.status = "completed"; saveRun(batchParent); releaseBatch();
+  assert.equal(completionEntries.length, 4);
+  assert.equal(widget, undefined);
   const history = commands.get("subagents").handler("", ctx);
   assert.match(frame("idle-history", component), /subagents 运行详情/);
   component.handleInput("\x1b");

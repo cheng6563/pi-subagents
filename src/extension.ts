@@ -21,9 +21,9 @@ export function loadDefaults(): Defaults {
 	if (c.timeoutMs !== undefined && (!Number.isSafeInteger(c.timeoutMs) || (c.timeoutMs as number) < 1)) throw new Error("timeoutMs must be an integer >= 1");
 	return { asyncByDefault: c.asyncByDefault as boolean ?? true, timeoutMs: c.timeoutMs as number ?? 1_800_000 };
 }
-function response(value: unknown) {
+function response(value: unknown, uiResultAtTail = false) {
 	const text = JSON.stringify(value, null, 2);
-	return { content: [{ type: "text" as const, text: text.length > 24_000 ? `${text.slice(0, 24_000)}\n[Truncated; read the run's outputPath/events.jsonl for full content.]` : text }], details: value };
+	return { content: [{ type: "text" as const, text: text.length > 24_000 ? `${text.slice(0, 24_000)}\n[Truncated; read the run's outputPath/events.jsonl for full content.]` : text }], details: uiResultAtTail && value && typeof value === "object" ? { ...value, uiResultAtTail: true } : value };
 }
 export interface ChildBinding {
 	depth: Depth;
@@ -45,7 +45,8 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 			currentSessionId = id;
 			controller = new RunController(binding?.root ?? storeRoot(id), (notice: Notice) => {
 				try {
-					pi.sendMessage({ customType: "subagent-notice", content: JSON.stringify(notice), display: true, details: notice }, { triggerTurn: !binding, deliverAs: "followUp" });
+					if (notice.type === "complete") ui?.refresh();
+					pi.sendMessage({ customType: "subagent-notice", content: JSON.stringify(notice), display: !ctx.hasUI || !!binding || notice.type !== "complete", details: notice }, { triggerTurn: !binding, deliverAs: "followUp" });
 				} catch (error) { console.error(JSON.stringify({ event: "subagent_notification_failed", runId: notice.runId, error: String(error) })); }
 			});
 			binding?.onController(controller);
@@ -65,6 +66,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 			const asynchronous = params.async ?? defaults.asyncByDefault;
 			const c = getController(ctx);
 			ui?.attach(ctx);
+			const uiResultAtTail = ctx.hasUI && !binding;
 			const launch = async (start: () => Promise<Run>) => {
 				const release = ui?.beginLaunch(ctx);
 				try { return await start(); } finally { release?.(); }
@@ -76,12 +78,12 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 						const run = c.status(id);
 						const progress = readProgress(run);
 						const key = `${run.status}:${progress?.updatedAt}:${Math.floor(Date.now() / 1000)}`;
-						if (key !== last) { last = key; onUpdate?.({ content: [{ type: "text", text: `subagents ${id} · ${progress?.activity ?? run.status}` }], details: { run, progress } }); }
+						if (key !== last) { last = key; onUpdate?.({ content: [{ type: "text", text: `subagents ${id} · ${progress?.activity ?? run.status}` }], details: { run, progress, ...(uiResultAtTail ? { uiResultAtTail: true } : {}) } }); }
 					} catch (error) { console.error(JSON.stringify({ event: "subagent_progress_read_failed", runId: id, error: String(error) })); }
 				};
 				// Interactive progress belongs to the fixed dock, not the scrolling transcript.
 				const timer = onUpdate && !ctx.hasUI ? setInterval(update, 250) : undefined;
-				try { if (onUpdate) update(); await c.wait(id, waitSignal); return response(c.result(id)); }
+				try { if (onUpdate) update(); await c.wait(id, waitSignal); ui?.refresh(); return response(c.result(id), uiResultAtTail); }
 				finally { if (timer) clearInterval(timer); }
 			};
 			if (params.action) {
@@ -102,7 +104,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 					case "resume": {
 						const run = await launch(() => c.resume(params.id!, params.message, depth, signal, asynchronous));
 						if (!asynchronous) return waitFor(run.id);
-						return response(run);
+						return response(run, uiResultAtTail);
 					}
 				}
 			}
@@ -120,7 +122,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 			};
 			const run = await launch(() => c.start(contract, { signal, notifyOnComplete: asynchronous }));
 			if (!asynchronous) return waitFor(run.id);
-			return response(run);
+			return response(run, uiResultAtTail);
 		},
 		renderCall: renderRunCall,
 		renderResult: createRunResultRenderer(),
