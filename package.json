@@ -29,7 +29,6 @@
     "index.ts",
     "src/**/*.ts",
     "*.mjs",
-    "skills/pi-subagents/**/*",
     "docs/**/*",
     "README.md",
     "CHANGELOG.md"
@@ -42,9 +41,6 @@
   "pi": {
     "extensions": [
       "./index.ts"
-    ],
-    "skills": [
-      "./skills/pi-subagents"
     ],
     "prompts": []
   },

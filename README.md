@@ -1,6 +1,6 @@
 # Pi 通用 subagents 执行器
 
-这是基于原 pi-subagents 运行时代码裁剪、独立维护的实现。保留 MIT 许可及历史提交，不常规合并或同步上游；只按需评估具体修复。仅提供一个通用 `subagent` 执行器，任务方法与业务标准由调用方提供。
+这是基于原 pi-subagents 运行时代码裁剪、独立维护的实现。保留 MIT 许可及历史提交，不常规合并或同步上游；只按需评估具体修复。提供通用 `subagent` 工具及 `/subagents` 界面。调用规则由工具描述和参数说明提供，不附带重复的用法 skill；任务方法与业务标准由调用方按需提供。
 
 ## 安装与更新
 
@@ -121,6 +121,7 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 npm install --include=dev
 npm run typecheck
 npm test
+PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/package.mts
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi npm run test:integration
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/startup-cancel.mts
 ```

@@ -14,7 +14,7 @@ const launchOptionsSchema = Type.Object({
 export type LaunchOptions = Static<typeof launchOptionsSchema>;
 
 export const parameters = Type.Object({
-	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const)),
+	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const, { description: "Omit to launch. list/status inspect runs; result reads output. wait consumes completion without another notice; aborting wait leaves the run active and restores async notification. interrupt pauses and permits resume; cancel terminates and cannot be resumed. resume continues the saved run under a new ID. steer sends instructions; report sends a message to the parent." })),
 	task: Type.Optional(Type.String({ minLength: 1, description: "Task for a new generic child. Omit action to launch." })),
 	// An open configuration object preserves optional fields on Responses transports
 	// that otherwise implicitly constrain closed schemas. Execution validates its exact keys/types.
@@ -24,7 +24,7 @@ export const parameters = Type.Object({
 		additionalProperties: true,
 		description: "Optional launch settings: requirementsFile, model, maxDepth, context, cwd, timeoutMs. Omit for defaults. Runtime rejects other keys/types. Not accepted by management/resume actions.",
 	})),
-	async: Type.Optional(Type.Boolean({ description: "Default true. Completion notifies the parent; false waits in this call. Also valid for resume." })),
+	async: Type.Optional(Type.Boolean({ description: "Default true: return a run ID and notify the parent on completion. false waits and returns the result without an extra completion notice. Also valid for resume." })),
 	id: Type.Optional(Type.String({ minLength: 1, description: "Exact run UUID for status/control/recovery." })),
 	message: Type.Optional(Type.String({ minLength: 1, description: "Resume/steer message or a child report to its parent." })),
 }, { additionalProperties: false });
