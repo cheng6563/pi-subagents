@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { SelectList, Text, matchesKey, truncateToWidth, type Component } from "@earendil-works/pi-tui";
 import type { RunController, Notice } from "./controller.ts";
 import { isTerminal, listRuns, type Run } from "./store.ts";
@@ -58,8 +58,11 @@ export function createRunResultRenderer() {
 					if (isTerminal(run.status) && run.status !== "completed") lines.push(theme.fg("warning", "未完成输出："));
 					// Tool output is literal text: soft Markdown line breaks must not merge numbered lines.
 					const rendered = new Text(output, 0, 0).render(width);
-					lines.push(...(options.expanded ? rendered : rendered.slice(0, 4)));
-					if (!options.expanded && rendered.length > 4) lines.push(theme.fg("dim", `… 另有 ${rendered.length - 4} 行，展开或 /subagents-fleet 查看`));
+					if (!options.expanded && rendered.length > 4) {
+						const key = keyText("app.tools.expand");
+						lines.push(theme.fg("dim", `… 前 ${rendered.length - 4} 行已折叠 · ${key ? `${key} 展开` : "/subagents-fleet 查看"}`));
+					}
+					lines.push(...(options.expanded ? rendered : rendered.slice(-4)));
 				}
 				if (options.expanded) lines.push(...new Text(theme.fg("dim", `ID ${run.id}\n产物 ${run.outputPath}\n日志 ${join(run.dir, "runner.log")}`), 0, 0).render(width));
 			} catch (error) { lines.push(...new Text(`${run.id} · ${run.status}\n${String(error)}`, 0, 0).render(width)); }

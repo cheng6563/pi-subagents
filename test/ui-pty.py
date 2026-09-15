@@ -66,11 +66,11 @@ try:
     if real_run is not None:
         def numbers(text):
             return {int(line.strip()) for line in text.splitlines() if re.fullmatch(r"\d{3}", line.strip())}
-        wait_for("另有 97 行", "real-collapsed-card")
+        wait_for(lambda text: "前 97 行" in text and "ctrl+o" in text and {97, 98, 99, 100} <= numbers(text), "real-collapsed-card")
         process.write("\x0f")
-        wait_for(lambda text: 100 in numbers(text), "real-expanded-card")
+        wait_for(lambda text: {96, 100} <= numbers(text) and "前 97 行" not in text, "real-expanded-card")
         process.write("\x0f")
-        wait_for("另有 97 行", "real-recollapsed-card")
+        wait_for(lambda text: "前 97 行" in text and {97, 98, 99, 100} <= numbers(text), "real-recollapsed-card")
         process.write("/subagents-fleet\r")
         first = wait_for(lambda text: "子代理运行详情" in text and 0 in numbers(text), "real-inspector")
         seen = numbers(first)
@@ -83,7 +83,7 @@ try:
             seen.update(numbers(text))
         assert seen == set(range(101)), f"Missing displayed numbers: {set(range(101)) - seen}"
         process.write("\x1b")
-        wait_for("另有 97 行", "real-close-restores-card")
+        wait_for("前 97 行", "real-close-restores-card")
     else:
         wait_for("UI_ACTIVE_CASE", "roster")
         progress_file = Path(fixture["progress"])

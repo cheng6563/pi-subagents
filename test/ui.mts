@@ -20,6 +20,9 @@ const jiti = createJiti(import.meta.url, { alias: aliases });
 const sdk = await jiti.import<any>("@earendil-works/pi-coding-agent");
 const tui = await jiti.import<any>("@earendil-works/pi-tui");
 sdk.initTheme("dark");
+const { KeybindingsManager } = await jiti.import<any>(join(host, "dist/core/keybindings.js"));
+const originalKeys = tui.getKeybindings();
+tui.setKeybindings(new KeybindingsManager());
 const theme = sdk.getSelectListTheme ? (await jiti.import<any>(join(host, "dist/modes/interactive/theme/theme.js"))).getThemeByName("dark") : undefined;
 const ui = await jiti.import<any>("../src/ui.ts");
 const session = sdk.SessionManager.create(root, join(root, "sessions"));
@@ -104,7 +107,14 @@ try {
   const collapsed = frame("multiline-collapsed", renderResult(result, { expanded: false }, theme));
   assert.ok(collapsed.split("\n").length <= 7);
   assert.doesNotMatch(collapsed, /HIDDEN_LONG_INSTRUCTION|这是一次/);
-  assert.match(collapsed, /另有 97 行/);
+  assert.match(collapsed, /前 97 行已折叠.*ctrl\+o 展开/);
+  assert.deepEqual(collapsed.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers.slice(-4));
+  tui.setKeybindings(new KeybindingsManager({ "app.tools.expand": "ctrl+e" }));
+  assert.match(frame("multiline-custom-key", renderResult(result, { expanded: false }, theme)), /ctrl\+e 展开/);
+  tui.setKeybindings(new KeybindingsManager());
+  const streaming = { details: { run: { ...multiline, status: "running" }, output: numbers.slice(0, 51).join("\n") } };
+  const streamingFrame = frame("streaming-tail", renderResult(streaming, { expanded: false, isPartial: true }, theme));
+  assert.deepEqual(streamingFrame.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers.slice(47, 51));
   const expanded = frame("multiline-expanded", renderResult(result, { expanded: true }, theme));
   assert.deepEqual(expanded.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers, "All 100 literal newlines must survive expansion");
   const multilineFleet = new ui.FleetComponent(() => [reader(multiline)], theme, () => {}, () => {}, () => 35, async () => {});
@@ -128,7 +138,7 @@ try {
   failedFleet.dispose();
   console.log(`UI_COMPONENTS_PASS ${root}`);
 } finally {
-  component?.dispose(); closeCustom?.(); lifecycle.dispose();
+  component?.dispose(); closeCustom?.(); lifecycle.dispose(); tui.setKeybindings(originalKeys);
   assert.equal(widget, undefined);
 }
 writeJson(join(process.env.PI_CODING_AGENT_DIR, "settings.json"), { quietStartup: true, defaultProvider: "fixture", defaultModel: "parent" });
