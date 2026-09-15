@@ -45,12 +45,15 @@ const commands = new Map<string, any>();
 const handlers = new Map<string, any>();
 const renderers = new Map<string, any>();
 let widget: any;
+let widgetComponent: any;
+let widgetCalls = 0;
+let placement: string | undefined;
 let component: any;
 let notices = 0;
 let closeCustom: (() => void) | undefined;
 const actions: any[] = [];
 const controller = { root: runsRoot, list: () => listRuns(runsRoot), cancel: async (id: string, pause: boolean) => { actions.push([pause ? "pause" : "cancel", id]); }, resume: async (id: string) => { actions.push(["resume", id]); }, steer: (id: string, text: string) => { actions.push(["steer", id, text]); } };
-const ctx = { hasUI: true, ui: { theme, setWidget: (_key: string, value: any) => { widget = value; }, notify() {}, confirm: async () => true, input: async () => "UI_STEER_MESSAGE", custom: (factory: any, options: any) => new Promise<void>(resolve => { assert.equal(options?.overlay, true, "Fullscreen viewport keys must be routed to the focused inspector overlay"); closeCustom = resolve; component = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, {}, resolve); }) } };
+const ctx = { hasUI: true, ui: { theme, setWidget: (_key: string, value: any, options?: any) => { widgetCalls++; widget = value; placement = options?.placement; widgetComponent = typeof value === "function" ? value({ terminal: { columns: 100, rows: 40 }, requestRender() {} }, theme) : undefined; }, notify() {}, confirm: async () => true, input: async () => "UI_STEER_MESSAGE", custom: (factory: any, options: any) => new Promise<void>(resolve => { assert.equal(options?.overlay, true, "Fullscreen viewport keys must be routed to the focused inspector overlay"); closeCustom = resolve; component = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, {}, resolve); }) } };
 const lifecycle = ui.registerRunUI({ registerCommand: (name: string, value: any) => commands.set(name, value), registerMessageRenderer: (name: string, value: any) => renderers.set(name, value), on: (name: string, cb: any) => handlers.set(name, cb), sendMessage: () => { notices++; } }, () => controller);
 const frame = (name: string, c: any, width = 100) => {
   const lines = c.render(width);
@@ -64,9 +67,27 @@ try {
   assert.deepEqual([...commands.keys()], ["subagents"]);
   handlers.get("session_start")({}, ctx);
   assert.equal(typeof widget, "function");
-  const roster = frame("roster", widget({}, theme));
+  const roster = frame("roster", widgetComponent);
+  assert.equal(placement, "belowEditor");
+  assert.equal(roster.split("\n").length, ui.LIVE_PANEL_ROWS);
   assert.match(roster, /^subagents ·/);
   assert.match(roster, /UI_ACTIVE_CASE/);
+  const mountedCalls = widgetCalls;
+  const mountedComponent = widgetComponent;
+  handlers.get("session_start")({}, ctx);
+  assert.equal(widgetCalls, mountedCalls, "Refreshing live data must not remount the widget");
+  assert.equal(widgetComponent, mountedComponent);
+  for (const width of [24, 40, 80, 100]) {
+    for (const text of ["", "short", "long".repeat(1000), "中文🙂\t".repeat(300), "\x1b[31mred\x1b[0m\n".repeat(30)]) {
+      const view = { ...reader(active), progress: { ...emptyProgress(), text } };
+      const lines = ui.renderRoster([view], theme, width);
+      assert.equal(lines.length, ui.LIVE_PANEL_ROWS);
+      assert.ok(lines.every((line: string) => tui.visibleWidth(line) <= width && !line.includes("\t")));
+    }
+    const preview = ui.tailPreview(Array.from({ length: 6 }, (_, i) => `ROW_${i} ${"中".repeat(200)}`).join("\n"), width);
+    assert.equal(preview.hidden, 2);
+    assert.deepEqual(preview.lines.map((line: string) => line.slice(0, 5)), ["ROW_2", "ROW_3", "ROW_4", "ROW_5"]);
+  }
   const renderResult = ui.createRunResultRenderer();
   assert.match(frame("completed-card", renderResult({ details: { run: done, output: "# Completed\nUI_OUTPUT_OK" } }, { expanded: true }, theme)), /UI_OUTPUT_OK/);
   assert.match(frame("failed-card", renderResult({ details: { run: failed, output: "" } }, { expanded: false }, theme)), /UI_FAILURE_DETAIL/);
@@ -115,9 +136,20 @@ try {
   tui.setKeybindings(new KeybindingsManager({ "app.tools.expand": "ctrl+e" }));
   assert.match(frame("multiline-custom-key", renderResult(result, { expanded: false }, theme)), /ctrl\+e 展开/);
   tui.setKeybindings(new KeybindingsManager());
-  const streaming = { details: { run: { ...multiline, status: "running" }, output: numbers.slice(0, 51).join("\n") } };
-  const streamingFrame = frame("streaming-tail", renderResult(streaming, { expanded: false, isPartial: true }, theme));
-  assert.deepEqual(streamingFrame.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers.slice(47, 51));
+  const streamingRun = createRun(join(root, "render-only"), contract("STREAMING"));
+  streamingRun.status = "running"; saveRun(streamingRun);
+  const streaming = { details: { run: streamingRun, output: numbers.slice(0, 51).join("\n") } };
+  for (const expanded of [false, true]) {
+    const streamingFrame = frame(`streaming-history-${expanded}`, renderResult(streaming, { expanded, isPartial: true }, theme));
+    assert.equal(streamingFrame.split("\n").length, 2, "Streaming history stays fixed even when other tools are expanded");
+    assert.match(streamingFrame, /实时进度见底部/);
+    assert.doesNotMatch(streamingFrame, /047|048|049|050/);
+  }
+  writeFileSync(join(streamingRun.dir, "progress.json"), "incomplete display snapshot", "utf8");
+  const independentHistory = frame("history-with-unreadable-progress", renderResult(streaming, { expanded: false, isPartial: true }, theme));
+  assert.equal(independentHistory.split("\n").length, 2, "History must not depend on the live display snapshot");
+  assert.match(independentHistory, /实时进度见底部/);
+  writeJson(join(streamingRun.dir, "progress.json"), emptyProgress());
   const expanded = frame("multiline-expanded", renderResult(result, { expanded: true }, theme));
   assert.deepEqual(expanded.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers, "All 100 literal newlines must survive expansion");
   const multilineFleet = new ui.FleetComponent(() => [reader(multiline)], theme, () => {}, () => {}, () => 35, async () => {});
@@ -128,8 +160,9 @@ try {
   }
   assert.deepEqual([...seen].sort(), numbers);
   multilineFleet.dispose();
-  writeJson(join(multiline.dir, "progress.json"), { ...emptyProgress(), activity: "输出中", text: numbers.slice(0, 48).join("\n"), tokens: 0 });
-  const staleFailed = { ...multiline, status: "failed", error: "fixture failure" };
+  const staleFailed = createRun(join(root, "render-only"), contract("FAILED_PARTIAL"));
+  staleFailed.status = "failed"; staleFailed.error = "fixture failure"; saveRun(staleFailed);
+  writeJson(join(staleFailed.dir, "progress.json"), { ...emptyProgress(), activity: "输出中", text: numbers.slice(0, 48).join("\n"), tokens: 0 });
   const failedPreview = frame("failed-partial", renderResult({ details: { run: staleFailed, output: "" } }, { expanded: false }, theme));
   assert.match(failedPreview, /未完成输出/);
   assert.doesNotMatch(failedPreview, /输出中|0 tokens/);
@@ -147,9 +180,17 @@ try {
   component.handleInput("\x1b");
   await history;
   assert.equal(widget, undefined, "Closing history while idle must not restore a status bar");
+  const idleCalls = widgetCalls;
+  // Observe longer than two former polling periods: no hidden idle redraw loop may remain.
+  await new Promise(resolve => setTimeout(resolve, 550));
+  assert.equal(widgetCalls, idleCalls);
+  const release = lifecycle.beginLaunch(ctx);
+  assert.equal(typeof widget, "function", "A new launch must restart the dock after idle");
+  assert.match(frame("launch-pending", widgetComponent), /启动中/);
+  assert.equal(widgetComponent.render(100).length, ui.LIVE_PANEL_ROWS);
   active.status = "running"; saveRun(active);
-  handlers.get("session_start")({}, ctx);
-  assert.equal(typeof widget, "function", "Active runs must restore the widget");
+  release();
+  assert.equal(typeof widget, "function", "Active runs must retain the widget after handoff");
   console.log(`UI_COMPONENTS_PASS ${root}`);
 } finally {
   component?.dispose(); closeCustom?.(); lifecycle.dispose(); tui.setKeybindings(originalKeys);

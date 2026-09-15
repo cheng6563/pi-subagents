@@ -73,15 +73,15 @@ export interface RunView {
 	run: Run; task: string; model: string; thinking: string; depth: string; context: string; cwd: string;
 	requirements?: string; progress?: RunProgress;
 }
-export function createViewReader(): (run: Run) => RunView {
+export function createViewReader(): (run: Run, includeProgress?: boolean) => RunView {
 	const summaries = new Map<string, Omit<RunView, "run" | "progress">>();
-	return (run) => {
+	return (run, includeProgress = true) => {
 		let summary = summaries.get(run.dir);
 		if (!summary) {
 			const c = readContract(run);
 			summary = { task: c.task, model: `${c.model.provider}/${c.model.id}`, thinking: c.model.thinking, depth: `${c.depth.depth}/${c.depth.maxDepth}`, context: c.context, cwd: c.cwd, requirements: c.requirements?.path };
 			summaries.set(run.dir, summary);
 		}
-		return { run, ...summary, progress: readProgress(run) };
+		return { run, ...summary, ...(includeProgress ? { progress: readProgress(run) } : {}) };
 	};
 }

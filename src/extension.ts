@@ -5,7 +5,7 @@ export { parameters } from "./parameters.ts";
 import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { childDepth, readRequirements, selectModel, forkMessages, type Depth, type Contract } from "./contract.ts";
 import { RunController, type Notice } from "./controller.ts";
-import { storeRoot } from "./store.ts";
+import { storeRoot, type Run } from "./store.ts";
 import { getAgentDir } from "./shared/utils.ts";
 import { readProgress } from "./progress.ts";
 import { createRunResultRenderer, registerRunUI, renderRunCall } from "./ui.ts";
@@ -65,6 +65,10 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 			const asynchronous = params.async ?? defaults.asyncByDefault;
 			const c = getController(ctx);
 			ui?.attach(ctx);
+			const launch = async (start: () => Promise<Run>) => {
+				const release = ui?.beginLaunch(ctx);
+				try { return await start(); } finally { release?.(); }
+			};
 			const waitFor = async (id: string, waitSignal?: AbortSignal) => {
 				let last = "";
 				const update = () => {
@@ -75,7 +79,8 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 						if (key !== last) { last = key; onUpdate?.({ content: [{ type: "text", text: `subagents ${id} · ${progress?.activity ?? run.status}` }], details: { run, progress } }); }
 					} catch (error) { console.error(JSON.stringify({ event: "subagent_progress_read_failed", runId: id, error: String(error) })); }
 				};
-				const timer = onUpdate ? setInterval(update, 250) : undefined;
+				// Interactive progress belongs to the fixed dock, not the scrolling transcript.
+				const timer = onUpdate && !ctx.hasUI ? setInterval(update, 250) : undefined;
 				try { if (onUpdate) update(); await c.wait(id, waitSignal); return response(c.result(id)); }
 				finally { if (timer) clearInterval(timer); }
 			};
@@ -95,7 +100,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 					case "interrupt": return response(await c.cancel(params.id, true));
 					case "steer": if (!params.message?.trim()) throw new Error("message is required"); c.steer(params.id, params.message); return response({ queued: true, id: params.id });
 					case "resume": {
-						const run = await c.resume(params.id, params.message, depth, signal, asynchronous);
+						const run = await launch(() => c.resume(params.id!, params.message, depth, signal, asynchronous));
 						if (!asynchronous) return waitFor(run.id);
 						return response(run);
 					}
@@ -113,7 +118,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 				...(requirements ? { requirements } : {}),
 				...(context === "fork" ? { contextMessages: forkMessages(buildSessionContext(ctx.sessionManager.getEntries(), ctx.sessionManager.getLeafId()).messages) } : {}),
 			};
-			const run = await c.start(contract, { signal, notifyOnComplete: asynchronous });
+			const run = await launch(() => c.start(contract, { signal, notifyOnComplete: asynchronous }));
 			if (!asynchronous) return waitFor(run.id);
 			return response(run);
 		},

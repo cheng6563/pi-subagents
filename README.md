@@ -37,12 +37,14 @@ subagent({
 - `options.model` 默认继承父会话的确切 provider/model 和 thinking level。可传 `shared:lowCost`，复用 `~/.pi/agent/shared-models.json` 解析，也可显式传 `provider/model[:thinking]`。
 - shared 配置、模型或凭据不可用会失败；运行时接口错误记录为失败，不换模型。Pi 自身同模型重试由常规 Pi 设置控制。
 - `options.cwd` 默认调用者目录，`options.timeoutMs` 默认 30 分钟，超时暂停而非重新执行。
-- `async` 默认 `true`，返回 ID 后由完成通知唤醒父会话；`false` 等待同一个运行器完成，过程中更新运行卡片，结果仅由工具返回，不再追加完成通知。同步恢复遵循同样规则。不存在能力不同的第二条前台执行链。
+- `async` 默认 `true`，返回 ID 后由完成通知唤醒父会话；`false` 等待同一个运行器完成，交互界面中的进度放在底部固定区域，结果仅由工具返回，不再追加完成通知。同步恢复遵循同样规则。不存在能力不同的第二条前台执行链。
 - 对仍在运行的异步任务调用 `wait`，完成结果由等待调用接收，不再追加通知；中断等待后恢复异步通知。已经发送的通知不会因后续查询而撤回。subagents 主动 `report` 不受完成通知去重影响。
 
 ## 可视化
 
-交互模式的调用卡片只显示一行任务摘要；结果卡片不重复任务正文，默认预览末尾 4 行输出，流式输出时跟随最新内容，展开后按原始换行完整显示。折叠提示显示 Pi 当前绑定的展开快捷键（默认 Ctrl+O），不覆盖用户按键配置。完整任务及路径在展开结果和详情中查看。运行面板仅在存在活动任务时显示，全部结束后自动隐藏；历史记录通过 `/subagents` 查看。界面名称统一使用 `subagents`，工具名 `subagent` 保持不变。面板刷新不向模型发送消息。
+交互模式的调用卡片只显示一行任务摘要。运行中对话卡片保持静态，进度固定在输入区下方的 8 行面板：一行标题、最多三条运行概要、首条运行的末尾四行输出；不足补齐，长行按终端列宽截断，不自动换行。实时完整内容通过 `/subagents` 查看。
+
+运行结束后卡片更新一次最终结果并固定下来；结果默认预览末尾 4 个逻辑行，每行限宽，展开后完整显示。提示使用 Pi 当前绑定的展开快捷键（默认 Ctrl+O），不覆盖用户配置。全部结束后面板隐藏并停止定时刷新；新运行启动时恢复。面板只在显示内容变化时重绘，不向模型发送消息。界面名称统一为 `subagents`，工具标识 `subagent` 保持不变。
 
 进度快照属于展示缓存：Windows 暂时拒绝替换 `progress.json` 时保留旧快照，记录非致命错误，下一次正常更新再写入，不中断任务。最终状态以运行记录为准，不使用残留的“输出中”覆盖失败或完成；模型尚未返回用量时显示未知值。
 
@@ -157,4 +159,11 @@ python3 test/progress-lock.py
 ```bash
 PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/tool-call-smoke.mts multiline
 python3 test/ui-pty.py <fixture.json绝对路径> <results.json绝对路径>
+```
+
+滚动回归测试覆盖宽行、空输出、后台完成后的历史卡片，以及 regular 模式的清滚动历史指令。它生成单独的 `fixture.json`，可在实际 Pi 进程中验证固定底部区域；fullscreen 模式同时发送滚轮事件，检查历史中段的阅读位置：
+
+```bash
+PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT=/absolute/path/to/installed/pi node --experimental-strip-types test/ui-scroll.mts
+python3 test/ui-live-pty.py <fixture.json绝对路径>
 ```

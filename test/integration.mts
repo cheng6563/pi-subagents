@@ -123,7 +123,15 @@ try {
     assert.deepEqual(registered, depth.depth < depth.maxDepth ? ["subagent"] : []);
     assert.ok(!events.includes("tool_call") && !events.includes("user_bash"));
   }
-  if (process.env.SUBAGENT_INTEGRATION_CASE === "tools") {
+  if (process.env.SUBAGENT_INTEGRATION_CASE === "ui-progress") {
+    const updates: any[] = [];
+    const interactive = { ...ctx, hasUI: true, ui: { setWidget() {} } };
+    const response = await tools.get("subagent").execute(randomUUID(), { task: "CASE_HOLD", async: false, options: { timeoutMs: 6000 } }, undefined, (update: any) => updates.push(update), interactive);
+    assert.equal(response.details.run.status, "paused");
+    assert.equal(updates.length, 1, "Interactive waiting must publish only the initial placeholder, not mutate history every tick");
+    assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === response.details.run.id).length, 0);
+    results.push({ name: "interactive_static_history", status: "passed", updates: updates.length });
+  } else if (process.env.SUBAGENT_INTEGRATION_CASE === "tools") {
     await scenario("CASE_DEFAULT", {});
     await scenario("CASE_DISABLED", {});
     await scenario("CASE_INCREASE", { maxDepth: 2 });
