@@ -32,6 +32,16 @@ const server = createServer(async (req, res) => {
     for await (const chunk of req) parts.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(parts).toString("utf8"));
     captures.push(body);
+    const exposedTools = body.tools.map((t: any) => t.function.name);
+    for (const name of ["task_list", "task_add", "question", "scratchpad", "memory_write", "memory_forget", "memory_restore"]) {
+      assert.ok(!exposedTools.includes(name), `Child must not expose ${name}`);
+    }
+    for (const name of ["probe", "late_probe", "memory_search", "memory_read", "memory_status"]) {
+      assert.ok(exposedTools.includes(name), `Child must retain ${name}`);
+    }
+    const system = body.messages.filter((m: any) => m.role === "system" || m.role === "developer");
+    assert.doesNotMatch(JSON.stringify(system), /PARENT_ONLY_(SNIPPET|GUIDELINE|HOOK)/);
+    assert.match(JSON.stringify(system), /KEPT_PROBE_SNIPPET/);
     const users = body.messages.filter((m: any) => m.role === "user");
     const caseName = [...users].reverse().map((m: any) => JSON.stringify(m.content).match(/CASE_[A-Z_]+/)?.[0]).find(Boolean);
     const toolMessages = body.messages.filter((m: any) => m.role === "tool");
@@ -82,6 +92,37 @@ writeFileSync(join(agentDir, "shared-models.json"), JSON.stringify({ lowCost: { 
 writeFileSync(join(agentDir, "AGENTS.md"), "ENVIRONMENT_MARKER", "utf8");
 const marker = join(root, "probe-count.txt");
 writeFileSync(join(agentDir, "extensions", "probe.ts"), `import { Type } from 'typebox';\nimport { appendFileSync } from 'node:fs';\nexport default function(pi) { pi.registerTool({ name:'probe', label:'Probe', description:'Runtime probe', parameters:Type.Object({}), async execute() { appendFileSync(${JSON.stringify(marker)}, 'probe\\n', 'utf8'); return {content:[{type:'text',text:'PROBE_OK'}]}; } }); }`, "utf8");
+// Parent-only tools deliberately carry both prompt metadata forms. Re-registering them
+// after startup and during a tool call must not bypass SDK exclusions.
+writeFileSync(join(agentDir, "extensions", "capabilities.ts"), `
+import { Type } from 'typebox';
+export default function(pi) {
+  const blocked = ['question', 'scratchpad', 'memory_write', 'memory_forget', 'memory_restore'];
+  const tool = name => ({ name, label:name, description:name, parameters:Type.Object({}),
+    promptSnippet: blocked.includes(name) ? 'PARENT_ONLY_SNIPPET' : 'KEPT_PROBE_SNIPPET',
+    promptGuidelines: blocked.includes(name) ? ['PARENT_ONLY_GUIDELINE'] : [],
+    async execute() { return {content:[{type:'text',text:'OK'}]}; } });
+  for (const name of [...blocked, 'memory_search', 'memory_read', 'memory_status']) pi.registerTool(tool(name));
+  pi.on('session_start', () => { for (const name of [...blocked, 'late_probe']) pi.registerTool(tool(name)); });
+  pi.on('tool_result', () => {
+    for (const name of [...blocked, 'task_list', 'task_add']) {
+      pi.registerTool({...tool(name), promptSnippet:'PARENT_ONLY_SNIPPET', promptGuidelines:['PARENT_ONLY_GUIDELINE']});
+    }
+    pi.setActiveTools([...pi.getActiveTools(), ...blocked, 'task_list', 'task_add']);
+  });
+}`, "utf8");
+mkdirSync(join(agentDir, "extensions", "task-list"));
+writeFileSync(join(agentDir, "extensions", "task-list", "index.ts"), `
+import { Type } from 'typebox';
+export default function(pi) {
+  for (const name of ['task_list', 'task_add']) pi.registerTool({name, label:name, description:name,
+    parameters:Type.Object({}), promptSnippet:'PARENT_ONLY_SNIPPET', promptGuidelines:['PARENT_ONLY_GUIDELINE'],
+    async execute() { throw new Error('Child task tool ran'); }});
+  pi.on('session_start', () => { throw new Error('Child task-list session_start ran'); });
+  pi.on('before_agent_start', event => ({systemPrompt:event.systemPrompt + 'PARENT_ONLY_HOOK'}));
+  pi.on('agent_settled', () => { throw new Error('Child task-list watchdog ran'); });
+}
+`, "utf8");
 writeFileSync(join(cwd, "launch.sh"), "pi() { printf 'PI_STUB_OK'; }\ncodex() { printf 'CODEX_STUB_OK'; }\npi\ncodex\n", "utf8");
 const md = join(cwd, "要求.md");
 writeFileSync(md, "ORIGINAL_REQUIREMENTS_中文", "utf8");
@@ -113,6 +154,9 @@ async function scenario(name: string, params: object, expected = "completed") {
     const progress = JSON.parse(readFileSync(join(result.run.dir, "progress.json"), "utf8"));
     assert.equal(progress.activity, "completed");
     assert.ok(progress.tools >= 1 && progress.tokens > 0, "Real worker progress must include tools and usage");
+    const events = readFileSync(join(result.run.dir, "events.jsonl"), "utf8");
+    assert.match(events, /child_tool_policy_applied/);
+    assert.match(events, /task-list/);
   }
   results.push({ name, runId: result.run.id, status: result.run.status, output: result.output });
   console.log(JSON.stringify(results.at(-1)));

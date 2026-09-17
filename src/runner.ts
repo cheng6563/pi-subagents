@@ -49,6 +49,7 @@ export async function runWorker(input: WorkerLaunch, pendingControls: unknown[] 
 				onController: (controller) => { children = controller; },
 				report: (message) => { event(run, "child_report", { message }); send({ type: "notice", message }); },
 			}) }],
+			onToolPolicyApplied: (policy) => event(run, "child_tool_policy_applied", policy),
 			onExtensionError: (error) => {
 				extensionError = `${error.extensionPath} (${error.event}): ${String(error.error)}`;
 				event(run, "extension_error", { error: extensionError });

@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { pinChildCacheRetention } from "../../shared/child-cache-retention.ts";
 import { getAgentDir } from "../../shared/utils.ts";
 import type { ModelSelection } from "../../contract.ts";
+import { CHILD_EXCLUDED_TOOLS, filterChildExtensions } from "./child-tool-policy.ts";
 
 export type PiCodingAgentModule = typeof import("@earendil-works/pi-coding-agent");
 export interface ChildSessionEvent { type: string; [key: string]: unknown }
@@ -27,6 +28,7 @@ export interface ChildSessionLaunch {
 	appendSystemPrompt: string;
 	hooks: { name: string; factory: (pi: ExtensionAPI) => void }[];
 	onExtensionError(error: { extensionPath: string; event: string; error: unknown }): void;
+	onToolPolicyApplied?(policy: { excludedTools: string[]; disabledExtensions: string[] }): void;
 }
 
 export function projectChildSessionEventForJson(event: ChildSessionEvent): unknown {
@@ -48,8 +50,16 @@ export function createDefaultChildSessionFactory(options: { loadPiCodingAgent?: 
 			if (!(globalThis as Record<symbol, unknown>)[themeKey] && typeof pi.initTheme === "function") pi.initTheme(settingsManager.getTheme());
 			const loader = new pi.DefaultResourceLoader({
 				cwd: launch.cwd, agentDir: getAgentDir(), settingsManager,
-				// Normal environment tools, extensions, skills and AGENTS.md remain available.
+				// Keep environment resources except parent-owned task-list lifecycle hooks.
 				noPromptTemplates: true, noThemes: true,
+				extensionsOverride: (base) => {
+					const filtered = filterChildExtensions(base);
+					launch.onToolPolicyApplied?.({
+						excludedTools: [...CHILD_EXCLUDED_TOOLS],
+						disabledExtensions: base.extensions.filter((extension) => !filtered.extensions.includes(extension)).map((extension) => extension.resolvedPath),
+					});
+					return filtered;
+				},
 				appendSystemPrompt: [launch.appendSystemPrompt],
 				extensionFactories: launch.hooks,
 			});
@@ -76,6 +86,8 @@ export function createDefaultChildSessionFactory(options: { loadPiCodingAgent?: 
 			const { session, modelFallbackMessage } = await pi.createAgentSession({
 				cwd: launch.cwd, agentDir: getAgentDir(), modelRuntime, model: selected,
 				thinkingLevel: launch.model.thinking, resourceLoader: loader, sessionManager, settingsManager,
+				// SDK exclusion also removes snippets/guidelines and survives dynamic registration.
+				excludeTools: [...CHILD_EXCLUDED_TOOLS],
 				sessionStartEvent: { type: "session_start", reason: "startup" },
 			});
 			if (modelFallbackMessage || session.model?.provider !== selected.provider || session.model?.id !== selected.id) {
