@@ -30,6 +30,9 @@ export class RunController {
 	private closing = false;
 	constructor(root: string, notify: (notice: Notice) => void = () => {}) { this.root = root; this.notify = notify; }
 
+	// Includes startup and shutdown until the owned worker actually exits; no stale disk records.
+	get activeCount(): number { return this.live.size; }
+
 	list(): Run[] { return listRuns(this.root).map((run) => this.reconcile(run)); }
 	status(id: string): Run { return this.reconcile(readRun(this.root, id)); }
 	private reconcile(run: Run): Run {

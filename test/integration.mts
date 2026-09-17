@@ -22,6 +22,7 @@ const { aliases, missing } = resolveHostPeerAliases(host);
 assert.deepEqual(missing, []);
 const jiti = createJiti(import.meta.url, { alias: aliases });
 const { registerExecutor } = await jiti.import<any>("../src/extension.ts");
+const { createEventBus } = await jiti.import<any>(join(host, "dist/core/event-bus.js"));
 const captures: any[] = [];
 let failedOnce = false;
 const sockets = new Set<any>();
@@ -90,6 +91,7 @@ const notices: any[] = [];
 const uiEntries: any[] = [];
 const sessionId = randomUUID();
 const pi = {
+  events: createEventBus(),
   registerTool: (t: any) => tools.set(t.name, t),
   registerCommand() {}, registerMessageRenderer() {}, registerEntryRenderer() {},
   appendEntry: (customType: string, data: any) => uiEntries.push({ customType, data }),
@@ -121,11 +123,77 @@ try {
   for (const depth of [{ depth: 1, maxDepth: 1 }, { depth: 1, maxDepth: 2 }]) {
     const registered: string[] = [];
     const events: string[] = [];
-    registerExecutor({ registerTool: (t: any) => registered.push(t.name), on: (name: string) => events.push(name) }, { depth, root, report() {}, onController() {} });
+    registerExecutor({ events: createEventBus(), registerTool: (t: any) => registered.push(t.name), on: (name: string) => events.push(name) }, { depth, root, report() {}, onController() {} });
     assert.deepEqual(registered, depth.depth < depth.maxDepth ? ["subagent"] : []);
     assert.ok(!events.includes("tool_call") && !events.includes("user_bash"));
   }
-  if (process.env.SUBAGENT_INTEGRATION_CASE === "ui-progress") {
+  if (process.env.SUBAGENT_INTEGRATION_CASE === "activity") {
+    const taskPath = process.env.TASK_LIST_EXTENSION;
+    assert.ok(taskPath, "Set TASK_LIST_EXTENSION to the task-list index.ts for cross-extension validation");
+    const { loadExtensions } = await jiti.import<any>(join(host, "dist/core/extensions/loader.js"));
+    const loaded = await loadExtensions([taskPath], cwd, pi.events);
+    assert.deepEqual(loaded.errors, []);
+    const taskExtension = loaded.extensions[0];
+    const taskEntries: any[] = [];
+    const wakes: any[] = [];
+    loaded.runtime.appendEntry = (customType: string, data: any) => taskEntries.push({ type: "custom", customType, data });
+    loaded.runtime.sendMessage = (message: any) => wakes.push(message);
+    const taskCtx = { ...ctx, isIdle: () => true, hasPendingMessages: () => false,
+      sessionManager: { ...ctx.sessionManager, getBranch: () => taskEntries },
+      ui: { setStatus() {}, setWidget() {}, notify() {}, theme: { fg: (_color: string, text: string) => text, strikethrough: (text: string) => text } } };
+    const emitTask = async (name: string) => { for (const cb of taskExtension.handlers.get(name) ?? []) await cb({ type: name }, taskCtx); };
+    const count = (id = sessionId) => {
+      let value = 0;
+      pi.events.emit("subagent:activity-query", { sessionId: id, respond: (n: number) => { value = n; } });
+      return value;
+    };
+    const until = async (predicate: () => boolean) => {
+      const deadline = Date.now() + 15000;
+      while (!predicate() && Date.now() < deadline) await delay(25);
+      assert.ok(predicate(), "Activity condition did not settle before deadline");
+    };
+    try {
+      await emitTask("session_start");
+      assert.equal(count(), 0);
+      const first = await call({ task: "CASE_HOLD" });
+      const second = await call({ task: "CASE_HOLD" });
+      assert.equal(count(), 2);
+      assert.equal(count("other-session"), 0, "Other sessions cannot inherit our wait");
+      await taskExtension.tools.get("task_list").definition.execute("set", { action: "set", items: ["A", "B"], start: true }, undefined, undefined, taskCtx);
+      await emitTask("agent_settled");
+      // Deliberately observe a full polling interval: this is an absence assertion, not readiness sleep.
+      await delay(1200);
+      assert.equal(wakes.length, 0, "Live workers must suppress actual task-list wakes");
+      await call({ action: "cancel", id: first.id });
+      assert.equal(count(), 1);
+      await delay(1200);
+      assert.equal(wakes.length, 0, "Finishing one worker must not release the other");
+      await call({ action: "interrupt", id: second.id });
+      assert.equal(count(), 0);
+      await until(() => wakes.length === 1);
+      assert.equal(wakes[0].customType, "task-list-watchdog");
+      assert.equal(taskEntries.at(-1).data.paused, false);
+      const resumed = await call({ action: "resume", id: second.id });
+      assert.equal(count(), 1, "Resume must reacquire activity tracking");
+      await call({ action: "cancel", id: resumed.id });
+      assert.equal(count(), 0);
+      const failed = await call({ task: "CASE_ASYNC_FAIL" });
+      await until(() => count() === 0);
+      assert.equal((await call({ action: "status", id: failed.id })).status, "failed");
+      await scenario("CASE_DEFAULT", {});
+      assert.equal(count(), 0, "Synchronous completion releases activity too");
+      const broken = join(agentDir, "extensions", "broken.ts");
+      writeFileSync(broken, "export default function() { throw new Error('ACTIVITY_BOOT_FAILURE'); }", "utf8");
+      try { await assert.rejects(() => call({ task: "CASE_BOOT" }), /ACTIVITY_BOOT_FAILURE/); }
+      finally { unlinkSync(broken); }
+      assert.equal(count(), 0, "Startup failure must not leave a stuck activity count");
+      const held = await call({ task: "CASE_HOLD" });
+      assert.equal(count(), 1);
+      for (const callback of handlers.get("session_shutdown") ?? []) await callback();
+      assert.equal(count(), 0, "Shutdown releases the session's activity snapshot");
+      results.push({ name: "cross_extension_activity_watchdog", status: "passed", shutdownRun: held.id });
+    } finally { await emitTask("session_shutdown"); }
+  } else if (process.env.SUBAGENT_INTEGRATION_CASE === "ui-progress") {
     const updates: any[] = [];
     const interactive = { ...ctx, hasUI: true, ui: { setWidget() {} } };
     const response = await tools.get("subagent").execute(randomUUID(), { task: "CASE_HOLD", async: false, options: { timeoutMs: 6000 } }, undefined, (update: any) => updates.push(update), interactive);

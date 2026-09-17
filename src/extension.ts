@@ -38,6 +38,13 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 	if (depth && depth.depth >= depth.maxDepth) return;
 	let controller: RunController | undefined;
 	let currentSessionId: string | undefined;
+	// Synchronous, session-scoped snapshot for other extensions. Do not create a controller
+	// or inspect historical status files just to answer an activity query.
+	pi.events.on("subagent:activity-query", (data) => {
+		const query = data as { sessionId?: string; respond?: (activeCount: number) => void } | undefined;
+		if (query?.sessionId !== currentSessionId || typeof query?.respond !== "function") return;
+		query.respond(controller?.activeCount ?? 0);
+	});
 	function getController(ctx: ExtensionContext): RunController {
 		const id = ctx.sessionManager.getSessionId();
 		if (controller && currentSessionId !== id) throw new Error("Session changed before executor shutdown");
