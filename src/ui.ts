@@ -77,7 +77,7 @@ export function createRunResultRenderer() {
 	return (result: { details?: unknown; content: unknown }, options: { expanded: boolean; isPartial?: boolean }, theme: Theme): Component => dynamic(width => {
 		const data = result.details as { run?: Run; output?: string; id?: string; dir?: string; uiResultAtTail?: boolean } | Run[] | undefined;
 		const runs = Array.isArray(data) ? data : data && ("run" in data && data.run ? [data.run] : "dir" in data && data.dir ? [data as Run] : []);
-		if (!runs?.length) return options.isPartial ? [truncateToWidth("运行中 · 实时进度见底部或 /subagents", width)] : new Text(contentText(result.content), 0, 0).render(width);
+		if (!runs?.length) return options.isPartial ? [truncateToWidth("运行中", width)] : new Text(contentText(result.content), 0, 0).render(width);
 		const lines: string[] = [];
 		for (const snapshot of runs.slice(0, options.expanded ? runs.length : 5)) {
 			try {
@@ -85,7 +85,7 @@ export function createRunResultRenderer() {
 				if (receipt || options.isPartial || !isTerminal(snapshot.status)) {
 					const view = readView(snapshot, false);
 					// The receipt never changes when the worker finishes; results are appended separately.
-					lines.push(`已提交 ${snapshot.id.slice(0, 8)} · ${view.model}`, theme.fg("dim", "实时进度见底部 · 结果见消息尾部 · /subagents 查看详情"));
+					lines.push(`已提交 ${snapshot.id.slice(0, 8)} · ${view.model}`, theme.fg("dim", singleLine(view.task)));
 					continue;
 				}
 				let saved = completed.get(snapshot.dir);

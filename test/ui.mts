@@ -169,14 +169,26 @@ try {
   for (const expanded of [false, true]) {
     const streamingFrame = frame(`streaming-history-${expanded}`, renderResult(streaming, { expanded, isPartial: true }, theme));
     assert.equal(streamingFrame.split("\n").length, 2, "Streaming history stays fixed even when other tools are expanded");
-    assert.match(streamingFrame, /实时进度见底部/);
+    assert.equal(streamingFrame.split("\n")[1], "STREAMING");
+    assert.doesNotMatch(streamingFrame, /实时进度见底部|结果见消息尾部|查看详情/);
     assert.doesNotMatch(streamingFrame, /047|048|049|050/);
   }
   writeFileSync(join(streamingRun.dir, "progress.json"), "incomplete display snapshot", "utf8");
   const independentHistory = frame("history-with-unreadable-progress", renderResult(streaming, { expanded: false, isPartial: true }, theme));
   assert.equal(independentHistory.split("\n").length, 2, "History must not depend on the live display snapshot");
-  assert.match(independentHistory, /实时进度见底部/);
+  assert.equal(independentHistory.split("\n")[1], "STREAMING");
   writeJson(join(streamingRun.dir, "progress.json"), emptyProgress());
+  for (const [index, task] of ["首句。第二句仍需显示", "第一行\r\n第二行\t第三行", "中文🙂\n".repeat(100), "\x1b[31m任务\x1b[0m\n".repeat(100)].entries()) {
+    const run = createRun(join(root, "render-only"), contract(task));
+    for (const width of [24, 40, 100]) for (const expanded of [false, true]) {
+      const receipt = frame(`task-receipt-${index}-${width}-${expanded}`, renderResult({ details: { run, uiResultAtTail: true } }, { expanded }, theme), width);
+      const lines = receipt.split("\n");
+      assert.equal(lines.length, 2, "The task prompt occupies exactly one row, even when expanded");
+      assert.equal(lines[1], stripVTControlCharacters(tui.truncateToWidth(stripVTControlCharacters(task).replace(/[\r\n\t]+/g, " "), width)));
+      assert.doesNotMatch(receipt, /实时进度见底部|结果见消息尾部|查看详情/);
+    }
+  }
+  assert.equal(frame("pending-without-run", renderResult({ content: [] }, { expanded: false, isPartial: true }, theme)), "运行中");
   const expanded = frame("multiline-expanded", renderResult(result, { expanded: true }, theme));
   assert.deepEqual(expanded.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers, "All 100 literal newlines must survive expansion");
   const multilineFleet = new ui.FleetComponent(() => [reader(multiline)], theme, () => {}, () => {}, () => 35, async () => {});
