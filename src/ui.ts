@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { keyText, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { SelectList, Text, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
+import { Text, matchesKey, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import type { RunController, Notice } from "./controller.ts";
 import { isTerminal, listRuns, type Run } from "./store.ts";
 import { contentText, createViewReader, type RunView } from "./progress.ts";
@@ -154,12 +154,16 @@ export class FleetComponent implements Component {
 	private views: RunView[] = [];
 	private selectedId?: string;
 	private scroll = 0;
-	private transcript = false;
+	private tab = 0;
+	private followTail = true;
+	private bodyLength = 0;
+	private currentText = "";
+	private historyText?: string;
 	private closed = false;
 	private busy = false;
 	private notice = "";
 	private pageSize = 10;
-	private transcriptCache?: { key: string; text: string };
+	private transcriptCache?: { key: string; text: string; lastAssistant: string };
 	private readonly readViews: () => RunView[];
 	private readonly theme: Theme;
 	private readonly redraw: () => void;
@@ -174,25 +178,54 @@ export class FleetComponent implements Component {
 		if (this.closed) return;
 		try {
 			this.views = this.readViews();
-			if (!this.views.some(v => v.run.id === this.selectedId)) this.selectedId = this.views[0]?.run.id;
+			if (!this.views.some(v => v.run.id === this.selectedId)) {
+				this.selectedId = (this.views.find(v => !isTerminal(v.run.status)) ?? this.views[0])?.run.id;
+				this.resetPosition();
+			}
 		} catch (error) { this.notice = `读取失败：${String(error)}`; }
 		this.redraw();
 	}
-	private selection(): SelectList {
-		const t = this.theme;
-		const list = new SelectList(this.views.map(v => ({ value: v.run.id, label: `${labels[v.run.status]} ${v.run.id.slice(0, 8)} ${brief(v.task, 64)}`, description: `${v.model} · ${elapsed(v.run)}` })), Math.min(5, Math.max(1, Math.floor(this.height() / 5))), {
-			selectedPrefix: s => t.fg("accent", s), selectedText: s => t.fg("accent", s), description: s => t.fg("dim", s), scrollInfo: s => t.fg("dim", s), noMatch: s => s,
-		});
-		list.setSelectedIndex(Math.max(0, this.views.findIndex(v => v.run.id === this.selectedId)));
-		list.onSelectionChange = item => { this.selectedId = item.value; this.scroll = 0; this.transcriptCache = undefined; };
-		return list;
+	private resetPosition(): void {
+		this.scroll = 0; this.followTail = this.tab !== 2; this.transcriptCache = undefined;
+		this.currentText = ""; this.historyText = undefined;
+	}
+	private moveSelection(delta: number): void {
+		if (!this.views.length) return;
+		const index = this.views.findIndex(v => v.run.id === this.selectedId);
+		this.selectedId = this.views[(index + delta + this.views.length) % this.views.length]!.run.id;
+		this.notice = ""; this.resetPosition();
+	}
+	private moveScroll(delta: number): void {
+		if (delta < 0 && this.tab !== 2 && this.currentText) this.historyText ??= this.currentText;
+		const max = Math.max(0, this.bodyLength - this.pageSize);
+		this.scroll = Math.max(0, Math.min(max, this.scroll + delta));
+		this.followTail = delta > 0 && this.scroll === max && this.tab !== 2;
+		if (this.followTail) this.historyText = undefined;
+	}
+	// Structural type keeps the extension compatible with hosts before mouse support.
+	handleMouse(event: { type: string; wheelDelta?: number }) {
+		if (event.type === "wheel" && event.wheelDelta) {
+			this.moveScroll(event.wheelDelta < 0 ? -3 : 3);
+			this.redraw();
+			return { handled: true, render: true };
+		}
+		return { handled: true };
 	}
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c") || data === "q") { this.closed = true; this.close(); return; }
-		if (matchesKey(data, "tab") || matchesKey(data, "enter")) { this.transcript = !this.transcript; this.scroll = 0; }
-		else if (matchesKey(data, "pageUp") || data === "K") this.scroll = Math.max(0, this.scroll - (data === "K" ? 1 : this.pageSize));
-		else if (matchesKey(data, "pageDown") || data === "J") this.scroll += data === "J" ? 1 : this.pageSize;
-		else if (data === "r" || data === "R") this.refresh();
+		if (matchesKey(data, "tab") || matchesKey(data, "enter") || /^[123]$/.test(data)) {
+			this.tab = /^[123]$/.test(data) ? Number(data) - 1 : (this.tab + 1) % 3;
+			this.resetPosition();
+		} else if (matchesKey(data, "left") || matchesKey(data, "right")) this.moveSelection(matchesKey(data, "left") ? -1 : 1);
+		else if (matchesKey(data, "pageUp")) this.moveScroll(-this.pageSize);
+		else if (matchesKey(data, "pageDown")) this.moveScroll(this.pageSize);
+		else if (matchesKey(data, "up") || data === "k" || data === "K") this.moveScroll(-1);
+		else if (matchesKey(data, "down") || data === "j" || data === "J") this.moveScroll(1);
+		else if (matchesKey(data, "home")) {
+			this.scroll = 0; this.followTail = false;
+			if (this.tab !== 2 && this.currentText) this.historyText ??= this.currentText;
+		}
+		else if (matchesKey(data, "end")) { this.scroll = Math.max(0, this.bodyLength - this.pageSize); this.followTail = this.tab !== 2; this.historyText = undefined; }
 		else if (["p", "D", "c", "s"].includes(data)) {
 			const v = this.views.find(v => v.run.id === this.selectedId);
 			if (v && !this.busy) {
@@ -201,45 +234,90 @@ export class FleetComponent implements Component {
 					.then(result => { this.notice = result === false ? "已取消操作" : "操作完成"; }, error => { this.notice = `操作失败：${String(error)}`; })
 					.finally(() => { this.busy = false; this.refresh(); });
 			}
-		} else this.selection().handleInput(data === "j" ? "\x1b[B" : data === "k" ? "\x1b[A" : data);
+		}
 		if (!this.closed) this.redraw();
 	}
 	private conversation(v: RunView): string {
 		const path = v.run.sessionFile;
-		if (!path || !existsSync(path)) return "会话尚未写入；概览中可查看实时输出。";
+		if (!path || !existsSync(path)) return this.output(v);
 		const stat = statSync(path);
 		const key = `${path}:${stat.mtimeMs}:${stat.size}`;
 		if (this.transcriptCache?.key !== key) {
 			const chunks: string[] = [];
+			let lastAssistant = "";
 			for (const line of readFileSync(path, "utf8").split("\n")) {
 				try {
 					const entry = JSON.parse(line);
-					if (entry.type === "message" && entry.message) chunks.push(`${entry.message.role}${entry.message.toolName ? ` · ${entry.message.toolName}` : ""}\n${contentText(entry.message.content)}`);
+					if (entry.type !== "message" || !entry.message) continue;
+					const message = entry.message;
+					const role = ({ user: "用户 / 任务", assistant: "子代理", toolResult: "工具结果" } as Record<string, string>)[message.role] ?? message.role;
+					const text = contentText(message.content);
+					if (message.role === "assistant") lastAssistant = text;
+					if (text) chunks.push(`【${role}${message.toolName ? ` · ${message.toolName}` : ""}】\n${text}`);
 				} catch { /* A live JSONL file can end with an incomplete entry. */ }
 			}
-			this.transcriptCache = { key, text: chunks.join("\n\n") };
+			this.transcriptCache = { key, text: chunks.join("\n\n"), lastAssistant };
 		}
-		return this.transcriptCache.text || "等待会话内容…";
+		const live = !isTerminal(v.run.status) ? v.progress?.text : "";
+		const pending = live && !this.transcriptCache.lastAssistant.endsWith(live) ? `\n\n【子代理 · 实时输出】\n${live}` : "";
+		return (this.transcriptCache.text + pending + this.liveToolOutput(v)).trim() || this.output(v);
+	}
+	private liveToolOutput(v: RunView): string {
+		const tool = !isTerminal(v.run.status) && v.progress?.currentTool;
+		return tool ? `\n\n【工具 · ${tool} · 运行中】\n${v.progress?.toolOutput || "等待工具输出…"}` : "";
+	}
+	private output(v: RunView): string {
+		const saved = isTerminal(v.run.status) && existsSync(v.run.outputPath) ? readFileSync(v.run.outputPath, "utf8") : "";
+		const text = saved || v.progress?.text || v.progress?.previewText || "";
+		return (text + this.liveToolOutput(v)).trim() || (isTerminal(v.run.status) ? "没有输出记录。" : "等待子代理输出…");
 	}
 	render(width: number): string[] {
-		if (width < 36 || this.height() < 12) return new Text("subagents 详情至少需要 36 列、12 行；Esc 关闭。", 0, 0).render(width);
+		const height = this.height();
+		if (width < 36 || height < 16) return new Text("subagents 详情需 36 列、16 行；Esc 关闭。", 0, 0).render(width).slice(0, height);
 		const t = this.theme;
-		const v = this.views.find(v => v.run.id === this.selectedId);
-		const header = [t.fg("borderMuted", "─".repeat(Math.max(0, width))), t.fg("accent", t.bold("subagents 运行详情")), ...this.selection().render(width), t.fg("borderMuted", "─".repeat(Math.max(0, width)))];
-		let body: string[] = [];
-		if (v) {
-			const meta = `${state(v.run.status, t)} · ${stats(v)}\n${v.model} · ${v.thinking} · 深度 ${v.depth} · ${v.context}\nID ${v.run.id}${v.run.error ? `\n错误 ${v.run.error}` : ""}`;
-			let text: string;
-			try {
-				const saved = isTerminal(v.run.status) && existsSync(v.run.outputPath) ? readFileSync(v.run.outputPath, "utf8") : "";
-				text = this.transcript ? this.conversation(v) : `当前：${activity(v)}\n\n${isTerminal(v.run.status) && v.run.status !== "completed" ? "未完成输出" : "输出"}\n${saved || v.progress?.text || "等待输出…"}\n\n任务\n${v.task}${v.progress?.toolInput ? `\n\n最近工具输入：${v.progress.toolInput}` : ""}${v.progress?.toolOutput ? `\n\n最近工具输出：\n${v.progress.toolOutput}` : ""}\n\n目录 ${v.cwd}${v.requirements ? `\n要求 ${v.requirements}` : ""}\n产物 ${v.run.outputPath}${v.run.sessionFile ? `\n会话 ${v.run.sessionFile}` : ""}`;
-			} catch (error) { text = `读取失败：${String(error)}`; }
-			body = [...new Text(meta, 0, 0).render(width), ...new Text(text, 0, 0).render(width)];
-		} else body = ["当前会话没有 subagents 运行。"];
-		const help = new Text(`↑↓ 选择 · Enter/Tab ${this.transcript ? "概览" : "会话"} · PgUp/PgDn 滚动\np 暂停 · D 取消 · c 恢复 · s 补充 · r 刷新 · Esc 关闭${this.notice ? `\n${this.notice}` : ""}`, 0, 0).render(width);
-		this.pageSize = Math.max(1, this.height() - header.length - help.length - 2);
-		this.scroll = Math.min(this.scroll, Math.max(0, body.length - this.pageSize));
-		return [...header, ...body.slice(this.scroll, this.scroll + this.pageSize), t.fg("dim", `${this.transcript ? "会话" : "概览"} ${this.scroll + 1}–${Math.min(body.length, this.scroll + this.pageSize)}/${body.length}`), ...help].map(line => truncateToWidth(line, width));
+		const innerWidth = width - 4;
+		const row = (text: string) => {
+			const clipped = truncateToWidth(text, innerWidth);
+			return `${t.fg("borderAccent", "│")} ${clipped}${" ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)))} ${t.fg("borderAccent", "│")}`;
+		};
+		const rule = (left: string, right: string, title = "") => {
+			const text = truncateToWidth(title ? `─ ${title} ` : "", width - 2);
+			return t.fg("borderAccent", left + text + "─".repeat(Math.max(0, width - 2 - visibleWidth(text))) + right);
+		};
+		const index = this.views.findIndex(v => v.run.id === this.selectedId);
+		const v = this.views[index];
+		const listSize = Math.min(height < 24 ? 1 : 3, this.views.length);
+		const start = Math.max(0, Math.min(index - Math.floor(listSize / 2), this.views.length - listSize));
+		const header = [rule("┌", "┐", "subagents 运行详情 · Esc 关闭"), row(`代理 ${index + 1}/${this.views.length} · ← → 切换代理`)];
+		for (const item of this.views.slice(start, start + listSize)) {
+			header.push(row(`${item.run.id === this.selectedId ? t.fg("accent", "▶") : " "} ${state(item.run.status, t)} ${item.run.id.slice(0, 8)} · ${brief(item.task, innerWidth)}`));
+		}
+		header.push(rule("├", "┤"));
+		if (v) header.push(row(`${state(v.run.status, t)} · 深度 ${v.depth} · ${v.model} · ${compactUsage(v)}`));
+		const tabs = ["会话", "输出", "任务"];
+		header.push(row(tabs.map((name, i) => i === this.tab ? t.fg("accent", t.bold(`[${i + 1} ${name}]`)) : `${i + 1} ${name}`).join("   ") + " · Tab 切换"), rule("├", "┤"));
+		let text = "当前会话没有子代理运行。";
+		if (this.historyText !== undefined) text = this.historyText;
+		else if (v) try {
+			text = this.tab === 0 ? this.conversation(v) : this.tab === 1 ? this.output(v) : `任务提示\n${v.task}\n\nID ${v.run.id}\n${v.model} · ${v.thinking} · 深度 ${v.depth} · ${v.context}\n目录 ${v.cwd}${v.requirements ? `\n要求 ${v.requirements}` : ""}\n产物 ${v.run.outputPath}${v.run.sessionFile ? `\n会话 ${v.run.sessionFile}` : ""}${v.parentId ? `\n父代理 ${v.parentId}` : ""}`;
+			if (v.run.error) text += `\n\n错误：${v.run.error}`;
+		} catch (error) { text = `读取失败：${String(error)}`; }
+		// Freeze content, not just line numbers: live progress is a rolling 4000-character tail.
+		this.currentText = text;
+		if (!this.followTail && this.tab !== 2) this.historyText ??= text;
+		// Plain text keeps persisted content from injecting terminal controls into the frame.
+		const body = new Text(stripVTControlCharacters(text).replace(/\r\n/g, "\n").replace(/\r/g, "").replace(/\t/g, "    "), 0, 0).render(innerWidth);
+		const help = innerWidth >= 76
+			? ["↑↓ / j k 滚动 · PgUp/PgDn 翻页 · Home 开头 · End 最新", "p 暂停 · D 取消 · c 恢复 · s 补充任务"]
+			: ["↑↓ 滚动 · PgUp/PgDn 翻页", "Home 开头 · End 最新", "p 暂停 D 取消 c 恢复 s 补充"];
+		this.pageSize = Math.max(1, height - header.length - help.length - 3);
+		this.bodyLength = body.length;
+		const max = Math.max(0, body.length - this.pageSize);
+		this.scroll = this.followTail ? max : Math.min(this.scroll, max);
+		const content = body.slice(this.scroll, this.scroll + this.pageSize);
+		while (content.length < this.pageSize) content.push("");
+		const position = `${tabs[this.tab]} ${body.length ? this.scroll + 1 : 0}–${Math.min(body.length, this.scroll + this.pageSize)}/${body.length} · ${this.followTail ? "跟随最新 · 自动更新" : this.tab === 2 ? "任务详情" : "历史快照 · End 接回最新"}`;
+		return [...header, ...content.map(row), rule("├", "┤"), row(this.notice || position), ...help.map(line => row(t.fg("dim", line))), rule("└", "┘")];
 	}
 	invalidate(): void { this.transcriptCache = undefined; }
 	dispose(): void { this.closed = true; }

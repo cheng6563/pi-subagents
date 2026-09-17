@@ -6,7 +6,7 @@ import { stripVTControlCharacters } from "node:util";
 import { createJiti } from "jiti";
 import { resolveHostPeerAliases } from "../src/runs/background/runner-aliases.ts";
 import { createRun, saveRun, listRuns, storeRoot, writeJson } from "../src/store.ts";
-import { createViewReader, emptyProgress } from "../src/progress.ts";
+import { applyProgress, createViewReader, emptyProgress } from "../src/progress.ts";
 
 const host = process.env.PI_SUBAGENTS_PI_CODING_AGENT_PACKAGE_ROOT;
 assert.ok(host);
@@ -59,7 +59,7 @@ const ctx = { hasUI: true, ui: { theme, setWidget: (_key: string, value: any, op
 const lifecycle = ui.registerRunUI({ registerCommand: (name: string, value: any) => commands.set(name, value), registerMessageRenderer: (name: string, value: any) => renderers.set(name, value), registerEntryRenderer: (name: string, value: any) => entryRenderers.set(name, value), appendEntry: (name: string, data: any) => { completionEntries.push({ customType: name, data }); session.appendCustomEntry(name, data); }, on: (name: string, cb: any) => handlers.set(name, cb), sendMessage: () => { notices++; } }, () => controller);
 const frame = (name: string, c: any, width = 100) => {
   const lines = c.render(width);
-  if (c === component) assert.ok(lines.length <= 35, "Inspector must leave room for Pi footer/editor framing");
+  if (c === component) assert.ok(lines.length <= 36, "Inspector must respect the overlay height");
   for (const line of lines) assert.ok(tui.visibleWidth(line) <= width, `${name}: line exceeds ${width} columns`);
   const text = lines.map(stripVTControlCharacters).join("\n");
   writeFileSync(join(root, `${name}.txt`), text, "utf8");
@@ -121,14 +121,13 @@ try {
   const pending = commands.get("subagents").handler("", ctx);
   assert.ok(component);
   assert.match(frame("fleet", component), /fixture\/parent/);
-  component.handleInput("\x1b[6~");
+  component.handleInput("2");
   assert.match(frame("fleet-output", component), /UI_STREAMING_TEXT/);
-  component.handleInput("\r");
-  component.handleInput("\x1b[6~");
+  component.handleInput("1");
   assert.match(frame("fleet-transcript", component), /UI_TRANSCRIPT_TOOL_RESULT/);
-  component.handleInput("\x1b[B");
+  component.handleInput("\x1b[C");
   assert.match(frame("nested", component), /深度 2\/2/);
-  component.handleInput("\x1b[A");
+  component.handleInput("\x1b[D");
   for (const key of ["p", "D", "c", "s"]) { component.handleInput(key); await new Promise(resolve => setImmediate(resolve)); }
   assert.deepEqual(actions.map(a => a[0]), ["pause", "cancel", "resume", "steer"]);
   assert.equal(actions[3][2], "UI_STEER_MESSAGE");
@@ -193,8 +192,9 @@ try {
   assert.deepEqual(expanded.split("\n").map(line => line.trim()).filter(line => /^\d{3}$/.test(line)), numbers, "All 100 literal newlines must survive expansion");
   const multilineFleet = new ui.FleetComponent(() => [reader(multiline)], theme, () => {}, () => {}, () => 35, async () => {});
   const seen = new Set<string>();
+  multilineFleet.handleInput("\x1b[H");
   for (let page = 0; page < 8; page++) {
-    for (const line of frame(`multiline-page-${page}`, multilineFleet).split("\n").map(line => line.trim())) if (/^\d{3}$/.test(line)) seen.add(line);
+    for (const line of frame(`multiline-page-${page}`, multilineFleet).split("\n").map(line => line.replace(/^│ | │$/g, "").trim())) if (/^\d{3}$/.test(line)) seen.add(line);
     multilineFleet.handleInput("\x1b[6~");
   }
   assert.deepEqual([...seen].sort(), numbers);
@@ -208,9 +208,90 @@ try {
   assert.equal(ui.renderRoster([reader(staleFailed), reader(done)], theme, 100).length, 0, "Idle roster must render nothing");
   const failedFleet = new ui.FleetComponent(() => [reader(staleFailed)], theme, () => {}, () => {}, () => 35, async () => {});
   const failedFrame = frame("failed-authoritative-state", failedFleet);
-  assert.match(failedFrame, /当前：失败/);
+  assert.match(failedFrame, /失败 · 深度/);
+  assert.match(failedFrame, /错误：fixture failure/);
   assert.doesNotMatch(failedFrame, /输出中/);
   failedFleet.dispose();
+  const liveTask = "INSPECTOR_TASK\n" + "PROMPT_ONLY\n".repeat(120);
+  const live = createRun(join(root, "render-only"), contract(liveTask));
+  live.status = "running";
+  live.sessionFile = join(live.dir, "session.jsonl");
+  const reply = Array.from({ length: 120 }, (_, i) => `REPLY_${String(i).padStart(3, "0")}`).join("\n");
+  writeFileSync(live.sessionFile, [
+    { type: "message", message: { role: "user", content: liveTask } },
+    { type: "message", message: { role: "assistant", content: [{ type: "text", text: reply }] } },
+  ].map(entry => JSON.stringify(entry)).join("\n") + "\n", "utf8");
+  let liveView = reader(live);
+  const inspector = new ui.FleetComponent(() => [reader(failed), liveView], theme, () => {}, () => {}, () => 36, async () => {});
+  const latest = frame("inspector-latest", inspector);
+  assert.match(latest, /REPLY_119/);
+  assert.doesNotMatch(latest, /^│ PROMPT_ONLY|r 刷新/m);
+  assert.match(latest, /代理 2\/2/);
+  assert.match(latest, /跟随最新/);
+  assert.equal(latest.split("\n").length, 36);
+  assert.ok(latest.split("\n").every(line => /^[┌├│└].*[┐┤│┘]$/.test(line)), "Every panel row has a complete frame");
+  const range = (text: string) => text.match(/会话 (\d+)–(\d+)\/(\d+)/)!.slice(1).map(Number);
+  inspector.handleInput("\x1b[5~");
+  const previous = frame("inspector-page-up", inspector);
+  assert.ok(range(previous)[0] < range(latest)[0]);
+  assert.match(previous, /历史快照/);
+  liveView = { ...liveView, progress: { ...emptyProgress(), text: "NEW_LIVE_OUTPUT", previewText: "NEW_LIVE_OUTPUT" } };
+  inspector.refresh();
+  const refreshed = frame("inspector-reading-anchor", inspector);
+  assert.deepEqual(range(refreshed), range(previous));
+  assert.deepEqual(refreshed.match(/^│ REPLY_.*$/gm), previous.match(/^│ REPLY_.*$/gm), "Automatic updates preserve visible content while status remains live");
+  inspector.handleMouse({ type: "wheel", wheelDelta: -1 });
+  assert.equal(range(frame("inspector-wheel-up", inspector))[0], range(previous)[0] - 3);
+  inspector.handleInput("\x1b[F");
+  assert.match(frame("inspector-follow-again", inspector), /NEW_LIVE_OUTPUT/);
+  inspector.handleInput("3");
+  assert.match(frame("inspector-task", inspector), /任务提示.*\n[\s\S]*INSPECTOR_TASK/);
+  inspector.handleInput("\x1b[6~");
+  assert.match(frame("inspector-task-page", inspector), /PROMPT_ONLY/);
+  inspector.handleInput("1");
+  inspector.handleInput("\x1b[D");
+  assert.match(frame("inspector-other-agent", inspector), /UI_FAILURE_DETAIL/);
+  for (const width of [36, 60, 80, 120]) {
+    const lines = inspector.render(width);
+    assert.equal(lines.length, 36);
+    assert.ok(lines.every((line: string) => tui.visibleWidth(line) === width));
+  }
+  inspector.dispose();
+  const rollingSession = join(live.dir, "rolling-session.jsonl");
+  const sessionMessage = (role: string, content: unknown) => JSON.stringify({ type: "message", message: { role, content } }) + "\n";
+  writeFileSync(rollingSession, sessionMessage("user", "ROLLING_TASK"), "utf8");
+  const rollingProgress = emptyProgress();
+  const rollingView = { ...reader(live), run: { ...live, sessionFile: rollingSession }, progress: rollingProgress };
+  const rollingFleet = new ui.FleetComponent(() => [rollingView], theme, () => {}, () => {}, () => 36, async () => {});
+  const rollingText = Array.from({ length: 500 }, (_, i) => `LIVE_${String(i).padStart(3, "0")}`).join("\n");
+  applyProgress(rollingProgress, { type: "message_start", message: { role: "assistant" } });
+  applyProgress(rollingProgress, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: rollingText } });
+  frame("rolling-latest", rollingFleet);
+  rollingFleet.handleInput("\x1b[5~");
+  const frozen = frame("rolling-history", rollingFleet);
+  const moreText = "\nLIVE_500\nLIVE_501\nLIVE_502";
+  applyProgress(rollingProgress, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: moreText } });
+  rollingFleet.refresh();
+  assert.equal(frame("rolling-history-after-delta", rollingFleet), frozen, "Rolling progress truncation must not move visible content");
+  writeFileSync(rollingSession, sessionMessage("user", "ROLLING_TASK") + sessionMessage("assistant", rollingText + moreText), "utf8");
+  applyProgress(rollingProgress, { type: "message_end", message: { role: "assistant", content: rollingText + moreText } });
+  rollingFleet.refresh();
+  assert.equal(frame("rolling-history-after-persist", rollingFleet), frozen, "Persisting the full message must not replace the historical snapshot");
+  rollingFleet.handleInput("\x1b[F");
+  assert.match(frame("rolling-rejoin-live", rollingFleet), /LIVE_502/);
+  applyProgress(rollingProgress, { type: "tool_execution_start", toolName: "bash", args: { command: "fixture" } });
+  applyProgress(rollingProgress, { type: "tool_execution_update", partialResult: { content: [{ type: "text", text: "LIVE_TOOL_RESULT_123" }] } });
+  for (const tab of ["1", "2"]) {
+    rollingFleet.handleInput(tab);
+    assert.match(frame(`live-tool-tab-${tab}`, rollingFleet), /工具 · bash · 运行中[\s\S]*LIVE_TOOL_RESULT_123/);
+  }
+  writeFileSync(rollingSession, readFileSync(rollingSession, "utf8") + sessionMessage("toolResult", "LIVE_TOOL_RESULT_123"), "utf8");
+  applyProgress(rollingProgress, { type: "tool_execution_end", result: { content: [{ type: "text", text: "LIVE_TOOL_RESULT_123" }] } });
+  rollingFleet.handleInput("1");
+  const settledTool = frame("settled-tool", rollingFleet);
+  assert.equal(settledTool.match(/LIVE_TOOL_RESULT_123/g)?.length, 1, "Saved tool results must not also appear as live output");
+  assert.doesNotMatch(settledTool, /工具 · bash · 运行中/);
+  rollingFleet.dispose();
   const receiptBefore = renderResult({ details: { ...active, uiResultAtTail: true } }, { expanded: false }, theme).render(100);
   writeFileSync(active.outputPath, "COMPLETION_UI_ONLY_MARKER", "utf8");
   active.status = "completed"; saveRun(active);

@@ -65,7 +65,7 @@ try:
     print(json.dumps({"stage": "spawn", "pid": process.pid}), flush=True)
     if real_run is not None:
         def numbers(text):
-            return {int(line.strip()) for line in text.splitlines() if re.fullmatch(r"\d{3}", line.strip())}
+            return {int(line.strip(" │")) for line in text.splitlines() if re.fullmatch(r"\d{3}", line.strip(" │"))}
         collapsed = wait_for(lambda text: "前 97 行" in text and "ctrl+o" in text and {97, 98, 99, 100} <= numbers(text), "real-collapsed-card")
         assert "subagents 同步" in collapsed and "0 运行" not in collapsed, "Idle status bar must be hidden"
         process.write("\x0f")
@@ -73,6 +73,8 @@ try:
         process.write("\x0f")
         wait_for(lambda text: "前 97 行" in text and {97, 98, 99, 100} <= numbers(text), "real-recollapsed-card")
         process.write("/subagents\r")
+        wait_for("subagents 运行详情", "real-inspector-open")
+        process.write("2\x1b[H")
         first = wait_for(lambda text: "subagents 运行详情" in text and 0 in numbers(text), "real-inspector")
         seen = numbers(first)
         for page in range(8):
@@ -91,15 +93,16 @@ try:
         progress_file = Path(fixture["progress"])
         progress = json.loads(progress_file.read_text(encoding="utf-8"))
         progress["activity"] = "PTY_LIVE_UPDATE"
+        progress["previewText"] = "PTY_LIVE_UPDATE"
         staging = progress_file.with_suffix(".update")
         staging.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
         staging.replace(progress_file)
         wait_for("PTY_LIVE_UPDATE", "live-update")
         process.write("/subagents\r")
         wait_for("subagents 运行详情", "inspector")
-        process.write("\r\x1b[6~")
+        process.write("1")
         wait_for("UI_TRANSCRIPT_TOOL_RESULT", "transcript")
-        process.write("\x1b[B")
+        process.write("\x1b[C")
         wait_for("深度 2/2", "nested-selection")
         process.write("\x1b")
         wait_for("PTY_LIVE_UPDATE", "close-restores-roster")
