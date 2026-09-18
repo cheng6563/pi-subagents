@@ -107,7 +107,13 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 					case "wait": return waitFor(params.id, signal);
 					case "cancel": return response(await c.cancel(params.id));
 					case "interrupt": return response(await c.cancel(params.id, true));
-					case "steer": if (!params.message?.trim()) throw new Error("message is required"); c.steer(params.id, params.message); return response({ queued: true, id: params.id });
+					case "steer": {
+						if (!params.message?.trim()) throw new Error("message is required");
+						const run = c.status(params.id);
+						c.steer(params.id, params.message);
+						// Preserve the model-facing receipt; retain the target snapshot for human-readable rendering.
+						return { ...response({ queued: true, id: params.id }), details: { queued: true, id: params.id, run } };
+					}
 					case "resume": {
 						const run = await launch(() => c.resume(params.id!, params.message, depth, signal, asynchronous));
 						if (!asynchronous) return waitFor(run.id);

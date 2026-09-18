@@ -39,8 +39,47 @@ export function tailPreview(text: string, width: number, count = 4): { lines: st
 	};
 }
 
+const controlLabels = { steer: "补充指令", resume: "恢复", interrupt: "暂停", cancel: "取消" } as const;
+type ControlAction = keyof typeof controlLabels;
+function isControlAction(action: Params["action"]): action is ControlAction {
+	return action !== undefined && Object.hasOwn(controlLabels, action);
+}
 export function renderRunCall(args: Params, theme: Theme): Component {
-	return dynamic(width => [truncateToWidth(`${theme.fg("toolTitle", theme.bold("subagents"))} ${args.action ?? (args.async === false ? "同步" : "启动")} ${args.id?.slice(0, 8) ?? ""}${args.task ? ` · ${brief(args.task, 72)}` : ""}`, width)]);
+	const action = isControlAction(args.action) ? controlLabels[args.action] : args.action;
+	return dynamic(width => [truncateToWidth(`${theme.fg("toolTitle", theme.bold("subagents"))} ${action ?? (args.async === false ? "同步" : "启动")} ${args.id?.slice(0, 8) ?? ""}${args.task ? ` · ${brief(args.task, 72)}` : ""}`, width)]);
+}
+function controlLines(action: ControlAction, args: Params, run: Run, task: string, expanded: boolean, theme: Theme, width: number): string[] {
+	let heading: string;
+	if (action === "steer") heading = "补充指令已入队（等待子代理处理）";
+	else if (action === "resume") heading = `已创建恢复运行 · ${labels[run.status] ?? run.status}`;
+	else {
+		const expected = action === "interrupt" ? "paused" : "cancelled";
+		heading = run.status === expected
+			? `${labels[run.status]}（${action === "interrupt" ? "可恢复" : "不可恢复"}）`
+			: `${controlLabels[action]}未执行 · 当前${labels[run.status] ?? run.status}`;
+	}
+	const ids = action === "resume" ? `${(run.resumedFrom ?? args.id ?? "").slice(0, 8)} → ${run.id.slice(0, 8)}` : run.id.slice(0, 8);
+	const lines = [truncateToWidth(`${theme.fg("accent", heading)} · ${ids}`, width)];
+	let clipped = false;
+	const field = (label: string, value: string) => {
+		if (expanded) lines.push(...new Text(`${label}：${stripVTControlCharacters(value)}`, 0, 0).render(width));
+		else {
+			const text = `${label}：${singleLine(value)}`;
+			clipped ||= /[\r\n]/.test(value) || visibleWidth(text) > width;
+			lines.push(truncateToWidth(text, width));
+		}
+	};
+	field("任务", task);
+	if (args.message) field("指令", args.message);
+	if (run.error && run.status === "failed") field("错误", run.error);
+	if (expanded) {
+		if (action === "resume" && run.resumedFrom) field("原 ID", run.resumedFrom);
+		field("ID", run.id);
+	} else if (clipped) {
+		const key = keyText("app.tools.expand");
+		lines.push(truncateToWidth(theme.fg("dim", key ? `${key} 展开完整内容` : "展开查看完整内容"), width));
+	}
+	return lines.map(line => truncateToWidth(line, width));
 }
 export const COMPLETION_ENTRY = "subagents-completion";
 export interface CompletionCard { view: RunView; output: string }
@@ -74,13 +113,19 @@ export function renderCompletionCard(data: CompletionCard, expanded: boolean, th
 export function createRunResultRenderer() {
 	const readView = createViewReader();
 	const completed = new Map<string, { view: RunView; output: string }>();
-	return (result: { details?: unknown; content: unknown }, options: { expanded: boolean; isPartial?: boolean }, theme: Theme): Component => dynamic(width => {
+	return (result: { details?: unknown; content: unknown }, options: { expanded: boolean; isPartial?: boolean }, theme: Theme, context?: { args?: Params; isError?: boolean }): Component => dynamic(width => {
 		const data = result.details as { run?: Run; output?: string; id?: string; dir?: string; uiResultAtTail?: boolean } | Run[] | undefined;
 		const runs = Array.isArray(data) ? data : data && ("run" in data && data.run ? [data.run] : "dir" in data && data.dir ? [data as Run] : []);
 		if (!runs?.length) return options.isPartial ? [truncateToWidth("运行中", width)] : new Text(contentText(result.content), 0, 0).render(width);
 		const lines: string[] = [];
 		for (const snapshot of runs.slice(0, options.expanded ? runs.length : 5)) {
 			try {
+				const args = context?.args;
+				if (!options.isPartial && !context?.isError && args && isControlAction(args.action)) {
+					const view = readView(snapshot, false);
+					lines.push(...controlLines(args.action, args, snapshot, view.task, options.expanded, theme, width));
+					continue;
+				}
 				const receipt = !Array.isArray(data) && data?.uiResultAtTail;
 				if (receipt || options.isPartial || !isTerminal(snapshot.status)) {
 					const view = readView(snapshot, false);
