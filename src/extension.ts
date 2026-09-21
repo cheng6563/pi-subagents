@@ -1,5 +1,6 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parameters, validateParams, type Params } from "./parameters.ts";
 export { parameters } from "./parameters.ts";
 import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -9,6 +10,8 @@ import { storeRoot, type Run } from "./store.ts";
 import { getAgentDir } from "./shared/utils.ts";
 import { readProgress } from "./progress.ts";
 import { createRunResultRenderer, registerRunUI, renderRunCall } from "./ui.ts";
+
+const usagePath = fileURLToPath(new URL("../README.md", import.meta.url)).replace(/\\/g, "/");
 
 interface Defaults { asyncByDefault: boolean; timeoutMs: number }
 export function loadDefaults(): Defaults {
@@ -63,7 +66,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 	const ui = binding ? undefined : registerRunUI(pi, getController);
 	pi.registerTool({
 		name: "subagent", label: "subagents",
-		description: "Run one generic Pi child with task and optional options; no named roles or inferred business/review criteria. Defaults: exact parent model, fresh context, maxDepth 1. Descendants inherit the absolute depth ceiling and cannot increase it; at the ceiling the subagent tool is absent. Child sessions hide parent-owned task tracking, interactive questions and persistent-memory mutation tools and their snippets/guidelines; task-list lifecycle hooks are disabled. Other environment tools, extensions and skills still load. Each launch is independent; coordinate shared-file writes across concurrent runs. Resume preserves the original loaded Markdown snapshot, model, depth, cwd and context, and returns a new ID; do not pass task/options to management actions. After timeouts, connection interruptions or other potentially recoverable errors, briefly check status and recent output to identify completed work, remaining work and any side effects; inspect relevant events/session only if needed. If still running, wait rather than resume. If stopped, resumable and work remains, proactively prefer resume with a message focused on remaining work; no renewed approval is needed solely for such errors within the authorized task. Do not repeat completed actions, default to a fresh launch or change model. Respect user-requested stops; pause and explain clear blockers or repeated recovery attempts with no progress. Output is truncated at 24,000 characters; read outputPath for the full result. A child with this tool can report to its parent using action:report.",
+		description: `Delegate a task to a Pi child or manage its run. Before use, read ${usagePath}. After recoverable errors, check status/output: wait if running, otherwise resume remaining authorized work without replaying side effects. Output limit: 24,000 characters; full text at outputPath.`,
 		parameters,
 		async execute(_callId, input: Params, signal, onUpdate, ctx) {
 			const params = validateParams(input);

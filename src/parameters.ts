@@ -3,30 +3,30 @@ import { Check } from "typebox/value";
 import { StringEnum } from "@earendil-works/pi-ai";
 
 const launchOptionsSchema = Type.Object({
-	requirementsFile: Type.Optional(Type.String({ minLength: 1, description: "UTF-8 .md file, relative to caller cwd; read before launch and saved for resume." })),
-	model: Type.Optional(Type.String({ minLength: 1, description: "Default: exact parent model. Use shared:lowCost or provider/model[:thinking]; unavailable selections fail without fallback." })),
-	maxDepth: Type.Optional(Type.Integer({ minimum: 1, description: "Absolute tree depth ceiling, root default 1. Descendants inherit it and cannot increase it." })),
-	context: Type.Optional(StringEnum(["fresh", "fork"] as const, { description: "Default fresh: no parent history/system prompt. fork copies parent conversation only. Normal environment resources still load." })),
-	cwd: Type.Optional(Type.String({ minLength: 1, description: "Child working directory; default caller cwd." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Run timeout; default 30 minutes." })),
+	requirementsFile: Type.Optional(Type.String({ minLength: 1, description: "UTF-8 .md task requirements; snapshotted at launch." })),
+	model: Type.Optional(Type.String({ minLength: 1, description: "Default: parent model. Override: shared:lowCost or provider/model[:thinking]." })),
+	maxDepth: Type.Optional(Type.Integer({ minimum: 1, description: "Absolute depth ceiling; default 1." })),
+	context: Type.Optional(StringEnum(["fresh", "fork"] as const, { description: "Default fresh; fork copies parent conversation." })),
+	cwd: Type.Optional(Type.String({ minLength: 1, description: "Default: caller cwd." })),
+	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Default: 1800000 ms." })),
 }, { additionalProperties: false });
 
 export type LaunchOptions = Static<typeof launchOptionsSchema>;
 
 export const parameters = Type.Object({
-	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const, { description: "Omit to launch. list/status inspect runs; result reads output. wait consumes completion without another notice; aborting wait leaves the run active and restores async notification. interrupt pauses and permits resume; cancel terminates and cannot be resumed. resume continues the saved run under a new ID. steer sends instructions; report sends a message to the parent." })),
-	task: Type.Optional(Type.String({ minLength: 1, description: "Task for a new generic child. Omit action to launch. Start with a short sentence stating the action, target and goal; this opening is used as the UI summary. Put necessary background, permissions and constraints afterward instead of leading with who requested delegation or why." })),
+	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const, { description: "Omit to launch. interrupt pauses (resumable); cancel terminates (final); resume returns a new ID." })),
+	task: Type.Optional(Type.String({ minLength: 1, description: "New task; begin with action, target and goal, then context and constraints." })),
 	// An open configuration object preserves optional fields on Responses transports
 	// that otherwise implicitly constrain closed schemas. Execution validates its exact keys/types.
 	options: Type.Optional(Type.Unsafe<LaunchOptions>({
 		type: "object",
 		properties: launchOptionsSchema.properties,
 		additionalProperties: true,
-		description: "Optional launch settings: requirementsFile, model, maxDepth, context, cwd, timeoutMs. Omit for defaults. Runtime rejects other keys/types. Not accepted by management/resume actions.",
+		description: "Launch only; omit for defaults.",
 	})),
-	async: Type.Optional(Type.Boolean({ description: "Default true: return a run ID and notify the parent on completion. false waits and returns the result without an extra completion notice. Also valid for resume." })),
-	id: Type.Optional(Type.String({ minLength: 1, description: "Exact run UUID for status/control/recovery." })),
-	message: Type.Optional(Type.String({ minLength: 1, description: "Resume/steer message or a child report to its parent." })),
+	async: Type.Optional(Type.Boolean({ description: "Default true: notify on completion. false: wait, no extra notice. Launch/resume only." })),
+	id: Type.Optional(Type.String({ minLength: 1, description: "Full run UUID." })),
+	message: Type.Optional(Type.String({ minLength: 1, description: "Resume/steer instructions or report to parent." })),
 }, { additionalProperties: false });
 
 export type Params = Static<typeof parameters>;
