@@ -1,6 +1,5 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { parameters, validateParams, type Params } from "./parameters.ts";
 export { parameters } from "./parameters.ts";
 import { buildSessionContext, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -10,8 +9,6 @@ import { storeRoot, type Run } from "./store.ts";
 import { getAgentDir } from "./shared/utils.ts";
 import { readProgress } from "./progress.ts";
 import { createRunResultRenderer, registerRunUI, renderRunCall } from "./ui.ts";
-
-const usagePath = fileURLToPath(new URL("../README.md", import.meta.url)).replace(/\\/g, "/");
 
 interface Defaults { asyncByDefault: boolean; timeoutMs: number }
 export function loadDefaults(): Defaults {
@@ -66,7 +63,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 	const ui = binding ? undefined : registerRunUI(pi, getController);
 	pi.registerTool({
 		name: "subagent", label: "subagents",
-		description: `Delegate a task to a Pi child or manage its run. Before use, read ${usagePath}. After recoverable errors, check status/output: wait if running, otherwise resume remaining authorized work without replaying side effects. Output limit: 24,000 characters; full text at outputPath.`,
+		description: "Run a generic Pi child; supply task criteria explicitly. Launches are independent: coordinate shared-file writes. Children load environment tools/skills but exclude task tracking, interactive questions and persistent-memory mutations. After recoverable errors, inspect status and recent output; wait if running, otherwise resume only if resumable with work remaining. Continue within existing authorization without renewed approval solely for the error; do not replay completed side effects, default to a new run or change model. Honor user stops; report blockers or repeated no-progress failures. Output limit: 24,000 characters; full text at outputPath.",
 		parameters,
 		async execute(_callId, input: Params, signal, onUpdate, ctx) {
 			const params = validateParams(input);
