@@ -4,7 +4,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 
 const launchOptionsSchema = Type.Object({
 	requirementsFile: Type.Optional(Type.String({ minLength: 1, description: "UTF-8 .md requirements, relative to caller cwd; loaded at launch, snapshot reused on resume." })),
-	model: Type.Optional(Type.String({ minLength: 1, description: "Default: exact parent model/thinking. Override: shared:lowCost or provider/model[:thinking]; unavailable choices fail, no fallback." })),
+	model: Type.Optional(Type.String({ minLength: 1, description: "Default: exact parent model/thinking. Prefer shared:lowCost when a lower-cost model is suitable for the task. Override: shared:lowCost or provider/model[:thinking]; unavailable choices fail, no fallback." })),
 	maxDepth: Type.Optional(Type.Integer({ minimum: 1, description: "Absolute depth ceiling; root default 1. Children inherit/cannot increase it; subagent is unavailable at the ceiling." })),
 	context: Type.Optional(StringEnum(["fresh", "fork"] as const, { description: "Default fresh: no parent history/system prompt. fork copies parent conversation only." })),
 	cwd: Type.Optional(Type.String({ minLength: 1, description: "Default: caller cwd." })),
