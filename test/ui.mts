@@ -66,6 +66,18 @@ const frame = (name: string, c: any, width = 100) => {
   return text;
 };
 try {
+  for (const [action, label] of Object.entries({ status: "查看状态", list: "列出任务", result: "读取结果", wait: "等待完成", report: "汇报", steer: "补充指令", resume: "恢复", interrupt: "暂停", cancel: "取消" })) {
+    const rendered = frame(`call-${action}`, ui.renderRunCall({ action, id: active.id }, theme));
+    assert.equal(rendered, `subagents ${label} ${active.id.slice(0, 8)}`);
+    frame(`call-${action}-narrow`, ui.renderRunCall({ action, id: active.id }, theme), 24);
+  }
+  for (const [name, args, label] of [
+    ["default", { task: "任务" }, "启动"],
+    ["sync", { task: "任务", async: false }, "同步"],
+    ["async", { task: "任务", async: true }, "启动"],
+  ] as const) {
+    assert.equal(frame(`call-${name}`, ui.renderRunCall(args, theme)), `subagents ${label}  · 任务`);
+  }
   assert.deepEqual([...commands.keys()], ["subagents"]);
   handlers.get("session_start")({}, ctx);
   assert.equal(typeof widget, "function");

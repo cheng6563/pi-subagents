@@ -40,12 +40,16 @@ export function tailPreview(text: string, width: number, count = 4): { lines: st
 }
 
 const controlLabels = { steer: "补充指令", resume: "恢复", interrupt: "暂停", cancel: "取消" } as const;
+const actionLabels: Record<NonNullable<Params["action"]>, string> = {
+	...controlLabels,
+	status: "查看状态", list: "列出任务", result: "读取结果", wait: "等待完成", report: "汇报",
+};
 type ControlAction = keyof typeof controlLabels;
 function isControlAction(action: Params["action"]): action is ControlAction {
 	return action !== undefined && Object.hasOwn(controlLabels, action);
 }
 export function renderRunCall(args: Params, theme: Theme): Component {
-	const action = isControlAction(args.action) ? controlLabels[args.action] : args.action;
+	const action = args.action ? actionLabels[args.action] ?? args.action : undefined;
 	return dynamic(width => [truncateToWidth(`${theme.fg("toolTitle", theme.bold("subagents"))} ${action ?? (args.async === false ? "同步" : "启动")} ${args.id?.slice(0, 8) ?? ""}${args.task ? ` · ${brief(args.task, 72)}` : ""}`, width)]);
 }
 function controlLines(action: ControlAction, args: Params, run: Run, task: string, expanded: boolean, theme: Theme, width: number): string[] {
