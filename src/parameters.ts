@@ -24,7 +24,7 @@ export const parameters = Type.Object({
 		additionalProperties: true,
 		description: "Launch only; omit for defaults. Management/resume rejects task and options; only listed option keys are accepted.",
 	})),
-	async: Type.Optional(Type.Boolean({ description: "Default true: return ID, notify on completion. false: wait, no extra notice. Launch/resume only. wait receives completion instead of a notification; aborting wait restores async notification." })),
+	async: Type.Optional(Type.Boolean({ description: "Default false (unless configured otherwise): wait for completion, no extra notice. Set true to return ID and notify on completion. Launch/resume only. wait receives completion instead of a notification; aborting wait restores async notification." })),
 	id: Type.Optional(Type.String({ minLength: 1, description: "Full run UUID; required for management except list/report." })),
 	message: Type.Optional(Type.String({ minLength: 1, description: "Required for steer/report; optional remaining-work instructions for resume. report is child-only." })),
 }, { additionalProperties: false });

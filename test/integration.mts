@@ -21,7 +21,14 @@ process.env.LOCALAPPDATA = root;
 const { aliases, missing } = resolveHostPeerAliases(host);
 assert.deepEqual(missing, []);
 const jiti = createJiti(import.meta.url, { alias: aliases });
-const { registerExecutor } = await jiti.import<any>("../src/extension.ts");
+const { registerExecutor, loadDefaults } = await jiti.import<any>("../src/extension.ts");
+const configPath = join(agentDir, "extensions", "subagent", "config.json");
+assert.deepEqual(loadDefaults(), { asyncByDefault: false, timeoutMs: 1_800_000 }, "Missing config defaults to synchronous execution");
+for (const config of [{}, { timeoutMs: 60000 }, { asyncByDefault: false }, { asyncByDefault: true }]) {
+  writeFileSync(configPath, JSON.stringify(config), "utf8");
+  assert.deepEqual(loadDefaults(), { asyncByDefault: config.asyncByDefault ?? false, timeoutMs: config.timeoutMs ?? 1_800_000 });
+}
+unlinkSync(configPath);
 const { createEventBus } = await jiti.import<any>(join(host, "dist/core/event-bus.js"));
 const captures: any[] = [];
 let failedOnce = false;
@@ -62,7 +69,7 @@ const server = createServer(async (req, res) => {
       if (["CASE_NEST", "CASE_INCREASE"].includes(caseName)) assert.ok(body.tools.some((t: any) => t.function.name === "subagent"));
       if (caseName === "CASE_REPORT") tool = { name: "subagent", arguments: { action: "report", message: "REPORT_MARKER" } };
       if (caseName === "CASE_INCREASE") tool = { name: "subagent", arguments: { task: "CASE_TOO_DEEP", options: { maxDepth: 999 }, async: false } };
-      if (caseName === "CASE_NEST") tool = { name: "subagent", arguments: { task: "CASE_LEAF", async: false } };
+      if (caseName === "CASE_NEST") tool = { name: "subagent", arguments: { task: "CASE_LEAF" } };
       if (caseName === "CASE_CLI") tool = { name: "bash", arguments: { command: "pi() { printf 'PI_STUB_OK'; }; codex() { printf 'CODEX_STUB_OK'; }; pi; codex" } };
       if (caseName === "CASE_SCRIPT") tool = { name: "bash", arguments: { command: "bash launch.sh" } };
     } else {
@@ -86,7 +93,7 @@ server.on("connection", (socket) => { sockets.add(socket); socket.on("close", ()
 await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
 const address = server.address() as { port: number };
 writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "fixture", defaultModel: "parent", retry: { enabled: false }, compaction: { enabled: false } }), "utf8");
-writeFileSync(join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ asyncByDefault: true, timeoutMs: 60000 }), "utf8");
+writeFileSync(join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ timeoutMs: 60000 }), "utf8");
 writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { fixture: { baseUrl: `http://127.0.0.1:${address.port}/v1`, api: "openai-completions", apiKey: "fixture-key", models: ["parent", "cheap"].map((id) => ({ id, name: id, reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 2048, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsStore: false } })) } } }), "utf8");
 writeFileSync(join(agentDir, "shared-models.json"), JSON.stringify({ lowCost: { provider: "fixture", model: "cheap" } }), "utf8");
 writeFileSync(join(agentDir, "AGENTS.md"), "ENVIRONMENT_MARKER", "utf8");
@@ -146,7 +153,7 @@ const progressUpdates: any[] = [];
 async function call(params: any) { const r = await tools.get("subagent").execute(randomUUID(), params, undefined, (update: any) => progressUpdates.push(update), ctx); return r.details; }
 const results: any[] = [];
 async function scenario(name: string, params: object, expected = "completed") {
-  const result = await call({ task: name, async: false, ...(Object.keys(params).length ? { options: params } : {}) });
+  const result = await call({ task: name, ...(Object.keys(params).length ? { options: params } : {}) });
   assert.equal(result.run.status, expected, JSON.stringify(result));
   assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === result.run.id).length, 0, "Synchronous launch must not enqueue completion notices");
   assert.ok(progressUpdates.some(u => u.details.run.id === result.run.id), "Synchronous execution must publish display updates");
@@ -199,8 +206,8 @@ try {
     try {
       await emitTask("session_start");
       assert.equal(count(), 0);
-      const first = await call({ task: "CASE_HOLD" });
-      const second = await call({ task: "CASE_HOLD" });
+      const first = await call({ task: "CASE_HOLD", async: true });
+      const second = await call({ task: "CASE_HOLD", async: true });
       assert.equal(count(), 2);
       assert.equal(count("other-session"), 0, "Other sessions cannot inherit our wait");
       await taskExtension.tools.get("task_list").definition.execute("set", { action: "set", items: ["A", "B"], start: true }, undefined, undefined, taskCtx);
@@ -217,11 +224,11 @@ try {
       await until(() => wakes.length === 1);
       assert.equal(wakes[0].customType, "task-list-watchdog");
       assert.equal(taskEntries.at(-1).data.paused, false);
-      const resumed = await call({ action: "resume", id: second.id });
+      const resumed = await call({ action: "resume", id: second.id, async: true });
       assert.equal(count(), 1, "Resume must reacquire activity tracking");
       await call({ action: "cancel", id: resumed.id });
       assert.equal(count(), 0);
-      const failed = await call({ task: "CASE_ASYNC_FAIL" });
+      const failed = await call({ task: "CASE_ASYNC_FAIL", async: true });
       await until(() => count() === 0);
       assert.equal((await call({ action: "status", id: failed.id })).status, "failed");
       await scenario("CASE_DEFAULT", {});
@@ -231,7 +238,7 @@ try {
       try { await assert.rejects(() => call({ task: "CASE_BOOT" }), /ACTIVITY_BOOT_FAILURE/); }
       finally { unlinkSync(broken); }
       assert.equal(count(), 0, "Startup failure must not leave a stuck activity count");
-      const held = await call({ task: "CASE_HOLD" });
+      const held = await call({ task: "CASE_HOLD", async: true });
       assert.equal(count(), 1);
       for (const callback of handlers.get("session_shutdown") ?? []) await callback();
       assert.equal(count(), 0, "Shutdown releases the session's activity snapshot");
@@ -263,7 +270,7 @@ try {
     await scenario("CASE_CLI", {});
     await scenario("CASE_SCRIPT", {});
   } else if (process.env.SUBAGENT_INTEGRATION_CASE === "wait") {
-    const held = await call({ task: "CASE_HOLD" });
+    const held = await call({ task: "CASE_HOLD", async: true });
     const waiting = new AbortController();
     const pending = tools.get("subagent").execute(randomUUID(), { action: "wait", id: held.id }, waiting.signal, undefined, ctx);
     waiting.abort();
@@ -309,7 +316,7 @@ try {
   writeFileSync(md, "CHANGED_REQUIREMENTS", "utf8");
   writeFileSync(join(agentDir, "shared-models.json"), JSON.stringify({ lowCost: { provider: "fixture", model: "parent" } }), "utf8");
   await assert.rejects(() => call({ action: "resume", id: failed.run.id, options: { model: "fixture/parent" } }), /options cannot override/);
-  const resumed = await call({ action: "resume", id: failed.run.id, async: false });
+  const resumed = await call({ action: "resume", id: failed.run.id });
   assert.equal(resumed.run.status, "completed", JSON.stringify(resumed));
   assert.equal(notices.filter(n => n.details.type === "complete" && n.details.runId === resumed.run.id).length, 0, "Synchronous resume must not enqueue completion notices");
   assert.equal(readFileSync(marker, "utf8"), before, "resume must not repeat probe side effects");
@@ -320,16 +327,16 @@ try {
   assert.doesNotMatch(JSON.stringify(captures.at(-1)), /CHANGED_REQUIREMENTS/);
   await assert.rejects(() => call({ action: "resume", id: failed.run.id }), /already resumed/);
   results.push({ name: "failure_resume_snapshot_no_replay", runId: resumed.run.id, status: resumed.run.status });
-  const held = await call({ task: "CASE_HOLD", options: { timeoutMs: 60000 } });
+  const held = await call({ task: "CASE_HOLD", async: true, options: { timeoutMs: 60000 } });
   const cancelled = await call({ action: "cancel", id: held.id });
   assert.equal(cancelled.status, "cancelled");
   await assert.rejects(() => call({ action: "resume", id: held.id }), /cannot be resumed/);
-  const paused = await call({ task: "CASE_HOLD", options: { timeoutMs: 60000 } });
+  const paused = await call({ task: "CASE_HOLD", async: true, options: { timeoutMs: 60000 } });
   assert.equal((await call({ action: "interrupt", id: paused.id })).status, "paused");
   assert.ok(notices.some((n) => n.details.type === "complete"));
   results.push({ name: "cancel_interrupt_notifications", status: "passed" });
   for (const [task, status] of [["CASE_MD", "completed"], ["CASE_ASYNC_FAIL", "failed"]]) {
-    const background = await call({ task });
+    const background = await call({ task, async: true });
     const deadline = Date.now() + 30000;
     while ((await call({ action: "status", id: background.id })).status === "running" && Date.now() < deadline) await delay(25);
     // Worker writes terminal state before exit; wait for the completion delivery event itself.
@@ -354,10 +361,10 @@ try {
   assert.equal(startupFailed.status, "failed");
   assert.equal(startupFailed.promptStarted, undefined);
   unlinkSync(brokenExtension);
-  const startupResumed = await call({ action: "resume", id: startupFailed.id, async: false });
+  const startupResumed = await call({ action: "resume", id: startupFailed.id });
   assert.equal(startupResumed.run.status, "completed", JSON.stringify(startupResumed));
   results.push({ name: "startup_failure_resume", status: "passed", runId: startupResumed.run.id });
-  const timeout = await call({ task: "CASE_HOLD", options: { timeoutMs: 6000 } });
+  const timeout = await call({ task: "CASE_HOLD", async: true, options: { timeoutMs: 6000 } });
   const timedOut = await call({ action: "wait", id: timeout.id });
   assert.equal(timedOut.run.status, "paused");
   assert.match(timedOut.run.error, /timed out/);

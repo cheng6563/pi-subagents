@@ -19,7 +19,8 @@
 ## 启动
 
 ```javascript
-subagent({ task: "读取指定目录并回答问题，不修改文件。" })
+subagent({ task: "读取指定目录并回答问题，不修改文件。" }) // 默认同步等待结果
+subagent({ task: "读取指定目录并回答问题，不修改文件。", async: true }) // 显式异步
 subagent({
   task: "核对本次修改。",
   options: {
@@ -38,7 +39,7 @@ subagent({
 - `options.model` 默认继承父会话的确切 provider/model 和 thinking level。可传 `shared:lowCost`，复用 `~/.pi/agent/shared-models.json` 解析，也可显式传 `provider/model[:thinking]`。
 - shared 配置、模型或凭据不可用会失败；运行时接口错误记录为失败，不换模型。Pi 自身同模型重试由常规 Pi 设置控制。
 - `options.cwd` 默认调用者目录，`options.timeoutMs` 默认 30 分钟，超时暂停而非重新执行。
-- `async` 默认 `true`，返回 ID 后由完成通知唤醒父会话；`false` 等待同一个运行器完成，交互界面中的进度放在底部固定区域，模型结果由工具返回，不再向模型追加完成通知。同步恢复遵循同样规则。不存在能力不同的第二条前台执行链。
+- `async` 默认 `false`，等待运行器完成，交互界面中的进度放在底部固定区域，模型结果由工具返回，不再向模型追加完成通知。显式传 `async: true` 才异步返回 ID，由完成通知唤醒父会话。启动和恢复遵循同样规则；可通过 `asyncByDefault` 配置覆盖默认值，调用参数优先。不存在能力不同的第二条前台执行链。
 - 对仍在运行的异步任务调用 `wait`，完成结果由等待调用接收，不再追加通知；中断等待后恢复异步通知。已经发送的通知不会因后续查询而撤回。subagents 主动 `report` 不受完成通知去重影响。
 
 ## 可视化
@@ -114,10 +115,12 @@ subagent({ action: "cancel", id: "完整运行 UUID" })
 
 ```json
 {
-  "asyncByDefault": true,
+  "asyncByDefault": false,
   "timeoutMs": 1800000
 }
 ```
+
+配置文件或 `asyncByDefault` 缺省时默认同步；显式配置 `true` 可恢复异步默认值。调用时传入 `async` 始终优先于配置。
 
 未知键明确报错，避免旧角色/验收配置被静默带入。shared 模型配置保持原格式：
 

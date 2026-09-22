@@ -13,13 +13,13 @@ import { createRunResultRenderer, registerRunUI, renderRunCall } from "./ui.ts";
 interface Defaults { asyncByDefault: boolean; timeoutMs: number }
 export function loadDefaults(): Defaults {
 	const file = join(getAgentDir(), "extensions", "subagent", "config.json");
-	if (!existsSync(file)) return { asyncByDefault: true, timeoutMs: 1_800_000 };
+	if (!existsSync(file)) return { asyncByDefault: false, timeoutMs: 1_800_000 };
 	const c = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
 	const unknown = Object.keys(c).filter((key) => !["asyncByDefault", "timeoutMs"].includes(key));
 	if (unknown.length) throw new Error(`Unsupported subagent configuration in ${file}: ${unknown.join(", ")}. See the independent executor README`);
 	if (c.asyncByDefault !== undefined && typeof c.asyncByDefault !== "boolean") throw new Error("asyncByDefault must be boolean");
 	if (c.timeoutMs !== undefined && (!Number.isSafeInteger(c.timeoutMs) || (c.timeoutMs as number) < 1)) throw new Error("timeoutMs must be an integer >= 1");
-	return { asyncByDefault: c.asyncByDefault as boolean ?? true, timeoutMs: c.timeoutMs as number ?? 1_800_000 };
+	return { asyncByDefault: c.asyncByDefault as boolean ?? false, timeoutMs: c.timeoutMs as number ?? 1_800_000 };
 }
 function response(value: unknown, uiResultAtTail = false) {
 	const text = JSON.stringify(value, null, 2);
