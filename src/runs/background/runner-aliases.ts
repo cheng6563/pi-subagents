@@ -20,7 +20,6 @@ export const JITI_ALIAS_ENV = "JITI_ALIAS";
 export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; subpath: string }> = [
 	{ specifier: "@earendil-works/pi-coding-agent", pkg: "@earendil-works/pi-coding-agent", subpath: "." },
 	{ specifier: "@earendil-works/pi-agent-core", pkg: "@earendil-works/pi-agent-core", subpath: "." },
-	{ specifier: "@earendil-works/pi-agent-core/node", pkg: "@earendil-works/pi-agent-core", subpath: "./node" },
 	{ specifier: "@earendil-works/pi-tui", pkg: "@earendil-works/pi-tui", subpath: "." },
 	{ specifier: "@earendil-works/pi-ai", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
 	{ specifier: "@earendil-works/pi-ai/compat", pkg: "@earendil-works/pi-ai", subpath: "./compat" },
@@ -29,6 +28,11 @@ export const HOST_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; 
 	{ specifier: "typebox", pkg: "typebox", subpath: "." },
 	{ specifier: "typebox/compile", pkg: "typebox", subpath: "./compile" },
 	{ specifier: "typebox/value", pkg: "typebox", subpath: "./value" },
+];
+
+/** Optional peer exports aliased when present in host package exports, but not required to exist across all Pi versions. */
+export const OPTIONAL_PEER_ALIASES: ReadonlyArray<{ specifier: string; pkg: string; subpath: string }> = [
+	{ specifier: "@earendil-works/pi-agent-core/node", pkg: "@earendil-works/pi-agent-core", subpath: "./node" },
 ];
 
 /** Public Pi manifests introduce chord in 0.85.0 (absent through 0.84.4). */
@@ -166,6 +170,11 @@ export function resolveHostPeerAliases(
 		}
 		if (target && fs.existsSync(target)) aliases[specifier] = target;
 		else missing.push(specifier);
+	}
+	for (const { specifier, pkg, subpath } of OPTIONAL_PEER_ALIASES) {
+		const packageDir = findPeerPackageDir(piPackageRoot, pkg, hostManifest?.name);
+		const target = packageDir ? resolvePackageSubpath(packageDir, subpath) : undefined;
+		if (target && fs.existsSync(target)) aliases[specifier] = target;
 	}
 	return { aliases, missing, supplemental };
 }
