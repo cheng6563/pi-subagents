@@ -45,11 +45,12 @@ export function createDefaultChildSessionFactory(options: { loadPiCodingAgent?: 
 		async create(launch: ChildSessionLaunch): Promise<ChildSession> {
 			const pi = await loadPi();
 			const modelRuntime = await pi.ModelRuntime.create();
-			const settingsManager = pi.SettingsManager.create(launch.cwd, getAgentDir());
+			const agentDir = getAgentDir();
+			const settingsManager = pi.SettingsManager.create(launch.cwd, agentDir);
 			const themeKey = Symbol.for("@earendil-works/pi-coding-agent:theme");
 			if (!(globalThis as Record<symbol, unknown>)[themeKey] && typeof pi.initTheme === "function") pi.initTheme(settingsManager.getTheme());
 			const loader = new pi.DefaultResourceLoader({
-				cwd: launch.cwd, agentDir: getAgentDir(), settingsManager,
+				cwd: launch.cwd, agentDir, settingsManager,
 				// Keep environment resources except parent-owned task-list lifecycle hooks.
 				noPromptTemplates: true, noThemes: true,
 				extensionsOverride: (base) => {

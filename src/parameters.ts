@@ -2,16 +2,22 @@ import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 import { StringEnum } from "@earendil-works/pi-ai";
 
-const launchOptionsSchema = Type.Object({
+const launchOptionProperties = {
 	requirementsFile: Type.Optional(Type.String({ minLength: 1, description: "UTF-8 .md requirements, relative to caller cwd; loaded at launch, snapshot reused on resume." })),
 	model: Type.Optional(Type.String({ minLength: 1, description: "Default: exact parent model/thinking. Override: shared:lowCost or provider/model[:thinking]; unavailable choices fail, no fallback." })),
 	maxDepth: Type.Optional(Type.Integer({ minimum: 1, description: "Absolute depth ceiling; root default 1. Children inherit/cannot increase it; subagent is unavailable at the ceiling." })),
 	context: Type.Optional(StringEnum(["fresh", "fork"] as const, { description: "Default fresh: no parent history/system prompt. fork copies parent conversation only." })),
 	cwd: Type.Optional(Type.String({ minLength: 1, description: "Default: caller cwd." })),
+};
+
+// Hidden from the model-facing schema for now; keep the runtime option for compatibility.
+const launchOptionsSchema = Type.Object(launchOptionProperties, { additionalProperties: false });
+const launchOptionsValidationSchema = Type.Object({
+	...launchOptionProperties,
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Default: 1800000 ms." })),
 }, { additionalProperties: false });
 
-export type LaunchOptions = Static<typeof launchOptionsSchema>;
+export type LaunchOptions = Static<typeof launchOptionsValidationSchema>;
 
 export const parameters = Type.Object({
 	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const, { description: "Omit to launch (task required). list/status inspect; result reads output; wait awaits completion (aborting wait does not stop the run). interrupt pauses (resumable); cancel terminates (final). resume keeps original requirements, model, depth, cwd and context, returning a new ID. steer sends instructions; report sends a message to parent." })),
@@ -33,7 +39,7 @@ export type Params = Static<typeof parameters>;
 
 export function validateParams(value: unknown): Params {
 	if (!Check(parameters, value)) throw new Error("Invalid subagent parameters. Use task and optional options for launch; action/id/message for management; async is available for both.");
-	if (value.options !== undefined && !Check(launchOptionsSchema, value.options)) {
+	if (value.options !== undefined && !Check(launchOptionsValidationSchema, value.options)) {
 		throw new Error("Invalid options. Supported keys/types: requirementsFile/string, model/string, maxDepth/integer >= 1, context/fresh|fork, cwd/string, timeoutMs/integer >= 1.");
 	}
 	return value;

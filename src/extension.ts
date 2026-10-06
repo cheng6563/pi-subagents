@@ -63,7 +63,7 @@ export function registerExecutor(pi: ExtensionAPI, binding?: ChildBinding): void
 	const ui = binding ? undefined : registerRunUI(pi, getController);
 	pi.registerTool({
 		name: "subagent", label: "subagents",
-		description: "Run a generic Pi child; supply task criteria explicitly. Launches are independent: coordinate shared-file writes. Children load environment tools/skills but exclude task tracking, interactive questions and persistent-memory mutations. After recoverable errors, inspect status and recent output; wait if running, otherwise resume only if resumable with work remaining. Continue within existing authorization without renewed approval solely for the error; do not replay completed side effects, default to a new run or change model. Honor user stops; report blockers or repeated no-progress failures. Output limit: 24,000 characters; full text at outputPath.",
+		description: "Run a generic Pi child; supply task criteria explicitly. Launches are independent: coordinate shared-file writes. Children load environment tools/skills but exclude task tracking, interactive questions and persistent-memory mutations. After recoverable errors, inspect status and recent output; wait if running, otherwise resume only if resumable with work remaining. Continue within existing authorization without renewed approval solely for the error; do not replay completed side effects, default to a new run or change model. Honor user stops; report blockers or repeated no-progress failures. Child final responses should be concise handoffs, not essays; detailed reports belong in requested artifacts. Full output remains at outputPath.",
 		parameters,
 		async execute(_callId, input: Params, signal, onUpdate, ctx) {
 			const params = validateParams(input);

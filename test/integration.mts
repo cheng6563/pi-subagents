@@ -48,6 +48,8 @@ const server = createServer(async (req, res) => {
     }
     const system = body.messages.filter((m: any) => m.role === "system" || m.role === "developer");
     assert.doesNotMatch(JSON.stringify(system), /PARENT_ONLY_(SNIPPET|GUIDELINE|HOOK)/);
+    assert.match(JSON.stringify(system), /GLOBAL_AGENT_ONLY_MARKER/);
+    assert.match(JSON.stringify(system), /PROJECT_AGENT_MARKER/);
     assert.match(JSON.stringify(system), /KEPT_PROBE_SNIPPET/);
     const users = body.messages.filter((m: any) => m.role === "user");
     const caseName = [...users].reverse().map((m: any) => JSON.stringify(m.content).match(/CASE_[A-Z_]+/)?.[0]).find(Boolean);
@@ -96,7 +98,8 @@ writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider:
 writeFileSync(join(agentDir, "extensions", "subagent", "config.json"), JSON.stringify({ timeoutMs: 60000 }), "utf8");
 writeFileSync(join(agentDir, "models.json"), JSON.stringify({ providers: { fixture: { baseUrl: `http://127.0.0.1:${address.port}/v1`, api: "openai-completions", apiKey: "fixture-key", models: ["parent", "cheap"].map((id) => ({ id, name: id, reasoning: false, input: ["text"], contextWindow: 128000, maxTokens: 2048, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, compat: { supportsStore: false } })) } } }), "utf8");
 writeFileSync(join(agentDir, "shared-models.json"), JSON.stringify({ lowCost: { provider: "fixture", model: "cheap" } }), "utf8");
-writeFileSync(join(agentDir, "AGENTS.md"), "ENVIRONMENT_MARKER", "utf8");
+writeFileSync(join(agentDir, "AGENTS.md"), "GLOBAL_AGENT_ONLY_MARKER", "utf8");
+writeFileSync(join(cwd, "AGENTS.md"), "PROJECT_AGENT_MARKER", "utf8");
 const marker = join(root, "probe-count.txt");
 writeFileSync(join(agentDir, "extensions", "probe.ts"), `import { Type } from 'typebox';\nimport { appendFileSync } from 'node:fs';\nexport default function(pi) { pi.registerTool({ name:'probe', label:'Probe', description:'Runtime probe', parameters:Type.Object({}), async execute() { appendFileSync(${JSON.stringify(marker)}, 'probe\\n', 'utf8'); return {content:[{type:'text',text:'PROBE_OK'}]}; } }); }`, "utf8");
 // Parent-only tools deliberately carry both prompt metadata forms. Re-registering them
