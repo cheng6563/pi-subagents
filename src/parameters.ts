@@ -3,10 +3,10 @@ import { Check } from "typebox/value";
 import { StringEnum } from "@earendil-works/pi-ai";
 
 const launchOptionProperties = {
-	requirementsFile: Type.Optional(Type.String({ minLength: 1, description: "UTF-8 .md requirements, relative to caller cwd; loaded at launch, snapshot reused on resume." })),
-	model: Type.Optional(Type.String({ minLength: 1, description: "Default: exact parent model/thinking. Override: shared:lowCost or provider/model[:thinking]; unavailable choices fail, no fallback." })),
-	maxDepth: Type.Optional(Type.Integer({ minimum: 1, description: "Absolute depth ceiling; root default 1. Children inherit/cannot increase it; subagent is unavailable at the ceiling." })),
-	context: Type.Optional(StringEnum(["fresh", "fork"] as const, { description: "Default fresh: no parent history/system prompt. fork copies parent conversation only." })),
+	requirementsFile: Type.Optional(Type.String({ minLength: 1, description: "Requirements markdown, relative to caller cwd." })),
+	model: Type.Optional(Type.String({ minLength: 1, description: "Default: parent model. shared:lowCost or provider/model[:thinking]." })),
+	maxDepth: Type.Optional(Type.Integer({ minimum: 1, description: "Depth ceiling. Default 1." })),
+	context: Type.Optional(StringEnum(["fresh", "fork"] as const, { description: "Default fresh. fork copies the parent conversation." })),
 	cwd: Type.Optional(Type.String({ minLength: 1, description: "Default: caller cwd." })),
 };
 
@@ -20,19 +20,19 @@ const launchOptionsValidationSchema = Type.Object({
 export type LaunchOptions = Static<typeof launchOptionsValidationSchema>;
 
 export const parameters = Type.Object({
-	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const, { description: "Omit to launch (task required). list/status inspect; result reads output; wait awaits completion (aborting wait does not stop the run). interrupt pauses (resumable); cancel terminates (final). resume keeps original requirements, model, depth, cwd and context, returning a new ID. steer sends instructions; report sends a message to parent." })),
-	task: Type.Optional(Type.String({ minLength: 1, description: "New task; begin with action, target and goal, then context and constraints." })),
+	action: Type.Optional(StringEnum(["status", "list", "result", "wait", "cancel", "interrupt", "resume", "steer", "report"] as const, { description: "Omit to launch." })),
+	task: Type.Optional(Type.String({ minLength: 1, description: "Task for a new run." })),
 	// An open configuration object preserves optional fields on Responses transports
 	// that otherwise implicitly constrain closed schemas. Execution validates its exact keys/types.
 	options: Type.Optional(Type.Unsafe<LaunchOptions>({
 		type: "object",
 		properties: launchOptionsSchema.properties,
 		additionalProperties: true,
-		description: "Launch only; omit for defaults. Management/resume rejects task and options; only listed option keys are accepted.",
+		description: "Launch options. Omit for defaults.",
 	})),
-	async: Type.Optional(Type.Boolean({ description: "Default false (unless configured otherwise): wait for completion, no extra notice. Set true to return ID and notify on completion. Launch/resume only. wait receives completion instead of a notification; aborting wait restores async notification." })),
-	id: Type.Optional(Type.String({ minLength: 1, description: "Full run UUID; required for management except list/report." })),
-	message: Type.Optional(Type.String({ minLength: 1, description: "Required for steer/report; optional remaining-work instructions for resume. report is child-only." })),
+	async: Type.Optional(Type.Boolean({ description: "Omit to wait. true returns an ID before completion." })),
+	id: Type.Optional(Type.String({ minLength: 1, description: "Run ID." })),
+	message: Type.Optional(Type.String({ minLength: 1, description: "steer, report, or resume message." })),
 }, { additionalProperties: false });
 
 export type Params = Static<typeof parameters>;
